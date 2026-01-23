@@ -14,7 +14,7 @@ st.set_page_config(
 # Sidebar
 st.sidebar.title("My Personal Quant")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("Navigation", ["Dashboard", "Long-Term (Smart Beta)", "Short-Term (Sniper)", "Data Inspector"])
+page = st.sidebar.radio("Navigation", ["Dashboard", "Long-Term (Smart Beta)", "Short-Term (Sniper)", "Data Inspector", "Backtest Lab"])
 
 # Global Ticker Selection - Session State Management
 if 'watchlist' not in st.session_state:
@@ -79,16 +79,9 @@ elif page == "Short-Term (Sniper)":
     short_term_view.render(tickers)
 
 elif page == "Data Inspector":
-    from src.data.store import DataStore
-    st.title("Data Inspector")
-    store = DataStore()
-    t = st.selectbox("Select Ticker", tickers)
-    if st.button("Load Data"):
-        df = store.get_market_data(t)
-        st.write("Market Data", df.tail())
-        
-        # Check Fundamentals
-        conn = store._get_conn()
-        fund_df = pd.read_sql("SELECT * FROM fundamentals WHERE ticker = ?", conn, params=[t])
-        conn.close()
-        st.write("Fundamentals", fund_df)
+    from src.ui import data_inspector_view
+    data_inspector_view.render(tickers)
+
+elif page == "Backtest Lab":
+    from src.ui import backtest_view
+    backtest_view.render(tickers)
