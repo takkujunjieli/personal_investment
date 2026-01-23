@@ -138,3 +138,61 @@ class CoreEngine:
         df = pd.concat([df, ta_df], axis=1)
         
         return df
+
+    def rank_magic_formula(self, tickers: list) -> pd.DataFrame:
+        """
+        Ranks stocks based on Joel Greenblatt's Magic Formula (Simplified).
+        1. Earnings Yield (Proxy: EPS / Price)
+        2. Return on Capital (Proxy: ROA = Net Income / Total Assets)
+        """
+        data = []
+        
+        for ticker in tickers:
+            # 1. Price
+            current_price = self.market.get_price(ticker)
+            if not current_price:
+                continue
+                
+            # 2. Fundamentals
+            self.fund.fetch_fundamentals(ticker) # Ensure we have data
+            metrics = self.fund.get_latest_metrics(ticker, [
+                'Net Income', 'Total Assets', 'Diluted EPS', 'Basic EPS'
+            ])
+            
+            # ROC Proxy: ROA
+            net_income = metrics.get('Net Income')
+            total_assets = metrics.get('Total Assets')
+            roc = np.nan
+            if net_income and total_assets and total_assets != 0:
+                roc = net_income / total_assets
+                
+            # Earnings Yield Proxy: EPS / Price
+            eps = metrics.get('Diluted EPS') or metrics.get('Basic EPS')
+            ey = np.nan
+            if eps and current_price and current_price != 0:
+                ey = eps / current_price
+            
+            if pd.isna(roc) or pd.isna(ey):
+                continue
+                
+            data.append({
+                'ticker': ticker,
+                'roc': roc,
+                'earnings_yield': ey,
+                'close': current_price
+            })
+            
+        df = pd.DataFrame(data)
+        if df.empty:
+            return df
+            
+        # Ranking (Higher is better for both)
+        df['rank_roc'] = df['roc'].rank(ascending=False)
+        df['rank_ey'] = df['earnings_yield'].rank(ascending=False)
+        
+        # Magic Formula Score = Sum of Ranks (Lower is better)
+        df['magic_score'] = df['rank_roc'] + df['rank_ey']
+        df.sort_values('magic_score', ascending=True, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        
+        return df

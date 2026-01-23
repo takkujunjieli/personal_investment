@@ -14,7 +14,7 @@ st.set_page_config(
 # Sidebar
 st.sidebar.title("My Personal Quant")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("Navigation", ["Dashboard", "Long-Term (Smart Beta)", "Short-Term (Sniper)", "Data Inspector", "Backtest Lab"])
+page = st.sidebar.radio("Navigation", ["Dashboard", "Long-Term Strategy", "Short-Term (Sniper)", "Data Inspector", "Backtest Lab"])
 
 # Global Ticker Selection - Session State Management
 if 'watchlist' not in st.session_state:
@@ -72,7 +72,7 @@ if page == "Dashboard":
     
     st.info("Select a module from the sidebar to begin analysis.")
 
-elif page == "Long-Term (Smart Beta)":
+elif page == "Long-Term Strategy":
     long_term_view.render(tickers)
 
 elif page == "Short-Term (Sniper)":
