@@ -38,8 +38,6 @@ $$ Score = 0.4 \times Z_{Mom} + 0.4 \times Z_{ROE} - 0.2 \times Z_{Vol} $$
 *   **增加 Value (价值因子)**: 我们目前没加 PE (市盈率) 或 PB (市净率)。
     *   *建议*: 如果你想抄底便宜货，可以加入 `1/PE` 作为因子。
     *   *风险*: 可能会买到 "Value Trap" (因为快破产了才便宜)。
-*   **优化 Momentum**:
-    *   *改进*: 学术界通常建议去除最近1个月 (12-1 Month Momentum)，因为最近1个月往往有反转效应。
 *   **优化 Quality**:
     *   *改进*: 除了 ROE，可以加入 `Gross Margin` (毛利率) 或 `Debt/Equity` (负债率)。
 

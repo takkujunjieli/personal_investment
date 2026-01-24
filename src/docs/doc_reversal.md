@@ -8,6 +8,25 @@
 
 ---
 
+## 5. Path to Professionalization (Refinement Roadmap)
+
+### A. Gamma Exposure (GEX) & Dark Pools
+*   **Concept**: When Market Makers are "Short Gamma", they are forced to sell as markets drop, accelerating the crash.
+*   **Refinement**: Only take crisis signals when **Net GEX is Negative**. This confirms the mathematical necessity of volatility expansion. (Requires Option metrics data).
+*   **DIX (Dark Index)**: High dark pool buying during a crash indicates "Smart Money" is absorbing the liquidity dump.
+
+### B. Correlation Filters
+*   **Refinement**: Check **Implied Correlation**.
+*   In a true Liquidity Crisis, Correlation -> 1.0. Everything is sold to raise cash (Gold, Bonds, Stocks).
+*   If Correlation is low, it might just be a specific sector issue (e.g., Oil crash), not a systemic liquidity event.
+
+### C. Time-Stop (Temporal Stop Loss)
+*   **Refinement**: Reversal trades should work *fast*.
+*   **Rule**: If the bounce doesn't happen within **3 Days**, exit. Do not turn a "trade" into an "investment" just because you are underwater.
+
+### D. Bond Market Signals
+*   **Refinement**: Watch **HYG (High Yield Bonds)**. If Stocks are crashing but HYG is stable, it's a fake-out. If HYG is crashing, the credit market is stressed -> Real Crisis -> Quality stocks are mispriced.
+
 ## 2. 核心逻辑 (Trading Logic)
 
 ### A. 市场环境过滤器 (Market Regime)

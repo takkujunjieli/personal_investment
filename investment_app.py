@@ -49,12 +49,25 @@ if st.sidebar.button("Remove"):
         WatchlistManager.save_watchlist(watchlist)
         st.rerun()
 
-# Update Global Tickers for Analysis
-tickers = watchlist
-st.session_state['tickers'] = tickers
+        WatchlistManager.save_watchlist(watchlist)
+        st.rerun()
 
-# Show Count
-st.sidebar.caption(f"Total: {len(tickers)}")
+# --- ANALYSIS SCOPE ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("Analysis Scope")
+scope_mode = st.sidebar.radio("Universe Mode:", ["All Watchlist", "Custom Subset"])
+
+if scope_mode == "All Watchlist":
+    tickers = watchlist
+else:
+    tickers = st.sidebar.multiselect("Select Active Tickers:", watchlist, default=watchlist)
+    if not tickers:
+        st.sidebar.warning("Please select at least one ticker.")
+        tickers = [] # Will likely cause empty df warnings downstream, which are handled.
+
+# Update Global Tickers for Analysis
+# st.session_state['tickers'] = tickers # Redundant if we pass 'tickers' to functions directly, but good for persistence if needed.
+st.sidebar.caption(f"Active: {len(tickers)} / {len(watchlist)}")
 
 # Routing
 if page == "Dashboard":

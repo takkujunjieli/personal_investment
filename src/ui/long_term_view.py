@@ -19,16 +19,20 @@ def run_analysis(tickers):
     
     # Top Ranked
     st.subheader("Top Ranked Stocks (with TA Overlay)")
-    st.dataframe(df[['ticker', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'volatility', 'close']].head(10).style.format({
-        'composite_score': '{:.2f}',
-        'momentum_12m': '{:.2%}',
-        'roe': '{:.2%}',
-        'volatility': '{:.2%}',
-        'close': '${:.2f}'
-    }).applymap(
-        lambda x: 'color: green' if x == 'Buy (Trend)' or x == 'Buy (Support Bounce)' else 'color: red' if x == 'Sell / Avoid' else '',
-        subset=['ta_action']
-    ))
+    st.dataframe(
+        df[['ticker', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
+            'composite_score': '{:.2f}',
+            'momentum_12m': '{:.2%}',
+            'roe': '{:.2%}',
+            'z_score': '{:.2f}',
+            'volatility': '{:.2%}',
+            'close': '${:.2f}'
+        }).map(
+            lambda x: 'color: green' if x == 'Buy (Trend)' or x == 'Buy (Support Bounce)' else 'color: red' if x == 'Sell / Avoid' else '',
+            subset=['ta_action']
+        ),
+        width='stretch'
+    )
     
     # Visualization
     st.subheader("Factor Map")
@@ -75,7 +79,7 @@ def run_magic_formula_analysis(tickers):
     st.markdown("Score = Rank(ROC) + Rank(Earnings Yield)")
     
     # Format and show
-    st.dataframe(df[['ticker', 'magic_score', 'roc', 'earnings_yield', 'close']].head(15).style.format({
+    st.dataframe(df[['ticker', 'magic_score', 'roc', 'earnings_yield', 'close', 'method']].head(15).style.format({
         'roc': '{:.2%}',
         'earnings_yield': '{:.2%}',
         'close': '${:.2f}',
@@ -140,10 +144,12 @@ def render(tickers):
             **核心哲学 (Philosophy)**: 
             买股票就是买公司。既然如此，我们应该买 **"好公司" (Good)**，并且在 **"便宜的价格" (Cheap)** 买入。如果一家公司资本回报率高，且市场对其定价过低，这就是捡钱的机会。
             
-            **因子模型 (Ranking Engine)**:
-            该策略不预测未来，只看现在。它将所有股票按以下两个指标分别排名，然后相加：
-            1.  🏭 **Return on Capital (资本回报率)**: 用 `EBIT / (Net Working Capital + Net Fixed Assets)` 衡量。我们这里使用 **ROA** 作为近似替代。代表公司利用资本赚钱的能力。
-            2.  💰 **Earnings Yield (盈利率)**: 用 `EBIT / Enterprise Value` 衡量。我们这里使用 `EPS / Price` 作为近似替代。代表你花钱买下公司后，每年能回本多少（类似房租回报率）。
+            **因子模型 (Ranking Engine - Hybrid)**:
+            *   **Strict Mode (优先)**: 使用 Greenblatt 原版公式 `EBIT/(EV)` 和 `EBIT/(Assets - Current Liab)`。
+            *   **Fallback Mode (备用)**: 如果 EV 数据缺失，自动切换为 `1/PE` 和 `ROA`。
+            
+            1.  🏭 **Return on Capital**: 衡量公司利用资本赚钱的能力。
+            2.  💰 **Earnings Yield**: 衡量你花钱买下公司后，每年能回本多少 (EBIT / Enterprise Value)。
             
             **适用场景 (Use Case)**:
             *   **逆向投资 (Contrarian)**: 专门寻找被市场错杀的优质股。
