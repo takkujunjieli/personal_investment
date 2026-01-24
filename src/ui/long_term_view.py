@@ -8,11 +8,11 @@ def run_analysis(tickers):
     Executes the Smart Beta analysis and renders results.
     """
     engine = CoreEngine()
-    with st.spinner("Fetching data and calculating factors... This may take a minute for the first run."):
+    with st.spinner("Loading data from Local Database (Instant)..."):
         df = engine.rank_stocks(tickers)
     
     if df.empty:
-        st.warning("No data found or all tickers failed.")
+        st.warning("No data found. Please go to 'Data Center' and run 'Batch Sync' first.")
         return
 
     st.success("Analysis Complete")
@@ -66,11 +66,11 @@ def run_magic_formula_analysis(tickers):
     Executes the Magic Formula analysis and renders results.
     """
     engine = CoreEngine()
-    with st.spinner("Calculating Magic Formula Ranks..."):
+    with st.spinner("Calculating Magic Formula Ranks (Local DB)..."):
         df = engine.rank_magic_formula(tickers)
         
     if df.empty:
-        st.warning("No data found (Fundamentals might be missing).")
+        st.warning("No data found. Please go to 'Data Center' and run 'Batch Sync' first.")
         return
         
     st.success("Magic Formula Calculation Complete")
@@ -98,6 +98,35 @@ def run_magic_formula_analysis(tickers):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+def run_garp_analysis(tickers):
+    engine = CoreEngine()
+    with st.spinner("Loading Growth & PEG Data (Local DB)..."):
+        df = engine.rank_garp(tickers)
+        
+    if df.empty:
+        st.warning("No data found. Please go to 'Data Center' and run 'Batch Sync' first.")
+        return
+        
+    st.success("GARP Analysis Complete")
+    
+    st.subheader("Top Growth Stocks (Value Adjusted)")
+    st.dataframe(df.head(15).style.format({
+        'growth': '{:.2%}',
+        'peg': '{:.2f}',
+        'roe': '{:.2%}',
+        'close': '${:.2f}'
+    }))
+    
+    st.subheader("Growth vs PEG Map")
+    fig = px.scatter(
+        df, x="growth", y="peg", color="garp_score", hover_name="ticker",
+        title="Ideal Sector: Bottom Right (High Growth, Low PEG)",
+        labels={"growth": "Revenue Growth", "peg": "PEG Ratio"}
+    )
+    # Add target box?
+    fig.add_hrect(y0=0, y1=2.0, line_width=0, fillcolor="green", opacity=0.1)
+    st.plotly_chart(fig, use_container_width=True)
+
 def render(tickers):
     st.title("Long-Term Investment Strategies")
     
@@ -115,20 +144,19 @@ def render(tickers):
         with st.expander("📖 Strategy Details: Philosophy & Methodology", expanded=True):
             st.markdown("""
             **核心哲学 (Philosophy)**: 
-            并不是所有的股票都生而平等。历史数据证明，具备特定特征（因子）的股票长期能跑赢大盘。Smart Beta 就是通过系统性的规则，将被动投资（指数）与主动选股（因子）结合起来。
+            Smart Beta 是一种"增强型指数投资"。我们不买整个干草堆(指数)，而是只挑选其中最亮的金针(优质股)。
             
-            **因子模型 (Factor Model)**:
-            *   🚀 **Momentum (动量 - 40%)**: "强者恒强"。我们计算 12个月的累计收益率（跳过最近1个月）。过去一年表现最好的股票，同时也大概率在未来继续表现良好。
-            *   💎 **Quality (质量 - 40%)**: "买得好不如买得对"。我们使用 **ROE (净资产收益率)** 作为核心指标，寻找具备持续盈利能力和护城河的公司。
-            *   🛡️ **Low Volatility (低波 - 20%)**: "稳中求胜"。我们惩罚高波动率的股票。在市场动荡期，低波股票能提供更好的风险调整后收益。
+            **📊 如何解读结果 (How to Read Analysis)**:
+            此策略会对所有股票进行打分排序，重点关注以下指标：
+            *   **Composite Score (综合得分)**: **越高越好**。这是基于动量(40%)、质量(40%)和低波(20%)权重的加权标准分。
+            *   **Momentum (动量)**:过去12个月的股价表现。数值越高，代表趋势越强。
+            *   **ROE (净资产收益率)**: "巴菲特最爱的指标"。衡量公司用股东的钱赚钱的能力。>15% 为优秀。
+            *   **Z-Score (破產风险)**: Altman Z-Score。>3.0 代表财务非常健康，<1.8 代表有破产风险。
             
-            **适用场景 (Use Case)**:
-            *   **核心持仓 (Core Holdings)**: 适合构建占据仓位 50%-80% 的压舱石组合。
-            *   **中长期持有**: 建议持有周期为 **3个月 - 1年以上**。
-            *   **季度轮动**: 建议每季度检查一次排名，剔除掉出前 20% 的股票。
-            
-            **技术叠加 (TA Overlay)**:
-            尽管这是基本面策略，我们依然引入了 **SMA 200** 和 **Trend Check** 作为辅助，避免在长期下降趋势中买入"便宜的好公司" (Value Trap)。
+            **操作建议**:
+            1.  关注排名前 10 的股票。
+            2.  检查 **TA Overlay** (技术面叠加)：避免买入处于 "Sell / Avoid" (下降趋势) 的股票，即使它很便宜。
+            3.  **持有周期**: 3-12 个月 (中长期趋势)。
             """)
         
         # Button Logic
@@ -142,24 +170,50 @@ def render(tickers):
         with st.expander("📖 Strategy Details: The Deep Value Engine", expanded=True):
             st.markdown("""
             **核心哲学 (Philosophy)**: 
-            买股票就是买公司。既然如此，我们应该买 **"好公司" (Good)**，并且在 **"便宜的价格" (Cheap)** 买入。如果一家公司资本回报率高，且市场对其定价过低，这就是捡钱的机会。
+            以"好价格"买入"好公司"。这是价值投资大师 Joel Greenblatt 发明的神奇公式，长期年化回报惊人。
             
-            **因子模型 (Ranking Engine - Hybrid)**:
-            *   **Strict Mode (优先)**: 使用 Greenblatt 原版公式 `EBIT/(EV)` 和 `EBIT/(Assets - Current Liab)`。
-            *   **Fallback Mode (备用)**: 如果 EV 数据缺失，自动切换为 `1/PE` 和 `ROA`。
+            **📊 如何解读结果 (How to Read Analysis)**:
+            *   **Magic Score**: **越低越好**! (排名总和)。它是 "ROC排名" + "收益率排名" 的总和。第一名的总分最低。
+            *   **ROC (资本回报率)**: 衡量公司"赚钱的效率"。越高越好。
+            *   **Earnings Yield (收益率)**: 衡量"性价比"。类似市盈率倒数(E/P)，越高代表越便宜。
             
-            1.  🏭 **Return on Capital**: 衡量公司利用资本赚钱的能力。
-            2.  💰 **Earnings Yield**: 衡量你花钱买下公司后，每年能回本多少 (EBIT / Enterprise Value)。
+            **图表解读**:
+            *   **右上角 (Dark Blue)**: 最佳区域。代表高ROC (好公司) 且 高Yield (便宜)。
             
-            **适用场景 (Use Case)**:
-            *   **逆向投资 (Contrarian)**: 专门寻找被市场错杀的优质股。
-            *   **长期持有**: 书中建议持仓 **1年**，不仅能等到价值回归，还能享受长期资本利得税优惠。
-            *   **心理挑战**: 这种策略选出来的股票通常都有"坏消息"缠身（否则不会便宜），需要极强的持币信心。
+            **操作建议**:
+            *   **逆向思维**: 排名靠前的公司通常最近都有坏消息（所以才便宜）。需要极强的心理素质持有。
+            *   **分散投资**: Greenblatt 建议持仓 20-30 只股票以分散个股风险。
+            *   **持有周期**: 1年 (需忍受短期波动)。
             """)
             
         if st.button("Run Magic Formula Analysis", type="primary"):
             st.session_state['active_lt_strategy'] = 'magic_formula'
 
+    # Card 3: GARP
+    with st.container():
+        st.subheader("🚀 GARP (Growth at Reasonable Price)")
+        with st.expander("📖 Strategy Details: Catching the Next Star", expanded=True):
+            st.markdown("""
+            **核心哲学**:
+            寻找还在高速成长期，但估值尚未泡沫化的股票。这是 Peter Lynch (彼得·林奇) 最爱的策略，专门捕捉 **Ten Baggers (十倍股)**。
+            
+            **📊 如何解读结果 (How to Read Analysis)**:
+            此策略寻找 **PEG < 1.0 (或 < 2.0)** 的股票。
+            *   **GARP Score**: **越低越好** (排名总和)。
+            *   **PEG Ratio**: 市盈率相对盈利增长比率 (PE / Growth)。
+                *   `< 1.0`: 严重低估 (Strong Buy)。
+                *   `1.0 - 2.0`: 合理区间 (Buy/Hold)。
+                *   `> 2.0`: 高估 (Avoid)。
+            *   **Revenue Growth**: 这一年的营收增长率。必须 > 15% 才有爆发力。
+            
+            **图表解读**:
+            *   **右下角**: 黄金区域 (高增长 + 低PEG)。这是我们要找的"漏网之鱼"。
+            
+            **风险提示**: 成长股波动极大，一旦增长不及预期，会有"双杀"风险 (EPS下降 + 估值下降)。
+            """)
+        if st.button("Run GARP Analysis", type="primary"):
+            st.session_state['active_lt_strategy'] = 'garp'
+            
     st.markdown("---")
 
     # Render Result if Active
@@ -173,3 +227,8 @@ def render(tickers):
         st.divider()
         st.header("🔮 Magic Formula Analysis Results")
         run_magic_formula_analysis(tickers)
+
+    elif st.session_state['active_lt_strategy'] == 'garp':
+        st.divider()
+        st.header("🚀 GARP Analysis Results")
+        run_garp_analysis(tickers)

@@ -1,7 +1,7 @@
 import json
 import os
 
-WATCHLIST_FILE = "watchlist.json"
+WATCHLIST_FILE = "src/data/universes/watchlist.json"
 
 class WatchlistManager:
     @staticmethod

@@ -121,3 +121,15 @@ class FundamentalDataFetcher:
         for r in results:
             data[r[0]] = r[1]
         return data
+
+    def get_live_info(self, ticker: str, keys: list) -> dict:
+        """
+        Fetches live data from yfinance info dict (e.g. PEG, Revenue Growth)
+        Warning: Slower than DB lookup.
+        """
+        try:
+            info = yf.Ticker(ticker).info
+            return {k: info.get(k) for k in keys}
+        except Exception as e:
+            print(f"Error fetching info for {ticker}: {e}")
+            return {k: None for k in keys}

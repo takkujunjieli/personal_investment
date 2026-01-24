@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from src.data.market_data import MarketDataFetcher
 from src.data.fundamental_data import FundamentalDataFetcher
+from src.data.store import DataStore
 from src.engines.ta_overlay import TechnicalAnalysis
 from sklearn.preprocessing import StandardScaler
 
@@ -9,20 +10,20 @@ class CoreEngine:
     def __init__(self):
         self.market = MarketDataFetcher()
         self.fund = FundamentalDataFetcher()
+        self.store = DataStore()
 
     def calculate_factors(self, tickers: list) -> pd.DataFrame:
         """
-        Calculates Value, Quality, and Momentum factors for a list of tickers.
+        Calculates Value, Quality, and Momentum factors for a list of tickers utilizing LOCAL DB only.
         Returns a DataFrame with raw factor values.
         """
         data = []
         
-        data = []
-        
-        # 0. Fetch Benchmark (SPY) for Relative Momentum
+        # 0. Fetch Benchmark (SPY) for Relative Momentum from DB
         self.spy_mom = 0.0
         try:
-            spy_df = self.market.fetch_data("SPY", period="2y")
+            # Direct DB Fetch
+            spy_df = self.store.get_market_data("SPY")
             if not spy_df.empty and len(spy_df) > 250:
                  # SPY 12-1 Month Calculation
                  spy_start = spy_df['close'].asfreq('B').shift(252).iloc[-1]
@@ -30,72 +31,55 @@ class CoreEngine:
                  
                  if not pd.isna(spy_start) and not pd.isna(spy_end):
                      self.spy_mom = (spy_end / spy_start) - 1
-                     print(f"Benchmark SPY 12-1m Return: {self.spy_mom:.2%}")
+                     # print(f"Benchmark SPY 12-1m Return: {self.spy_mom:.2%}")
         except Exception as e:
             print(f"Error fetching SPY benchmark: {e}")
 
+        # 1. Batch Fetch Fundamentals & Info (HUGE SPEEDUP)
+        print("Batch fetching fundamentals from DB...")
+        fund_metrics_list = [
+            'Net Income', 'Stockholders Equity', 'Total Equity Gross Minority Interest',
+            'Ebit', 'Total Assets', 'Current Assets', 'Current Liabilities',
+            'Retained Earnings', 'Total Revenue', 'Total Debt', 
+            'Total Liabilities Net Minority Interest', 'Basic Average Shares'
+        ]
+        batch_fundamentals = self.store.get_latest_fundamentals(tickers, fund_metrics_list)
+        # batch_info = self.store.get_latest_stock_info(tickers) # Not used heavily in Z-Score but good for Fallbacks? keeping it simplified.
+
+        # 2. Loop Tickers
         for ticker in tickers:
-            print(f"Processing {ticker}...")
-            # 1. Momentum (Market Data)
-            # 12-month return, RSI
-            price_df = self.market.fetch_data(ticker, period="2y")
+            # print(f"Processing {ticker}...")
+            # Momentum (Market Data from DB)
+            price_df = self.store.get_market_data(ticker)
             if price_df.empty:
                 continue
             
-            # Current Price for Valuation/Display
+            # Current Price
             current_price = price_df['close'].iloc[-1]
             
-            # Relative Momentum (vs SPY)
-            # We need SPY return for the same period. 
-            # Optimization: Fetch SPY once outside the loop? Yes, done below.
-            
-            # 12-1 Month Momentum (Standard Academic Momentum)
-            # Skip most recent 1 month (approx 21 trading days) to avoid short-term reversal
+            # 12-1 Month Momentum
             # Window: From 12 months ago to 1 month ago.
-            
-            # Start: 12 months ago (~252 days)
             start_price = price_df['close'].asfreq('B').shift(252).iloc[-1]
-            
-            # End: 1 month ago (~21 days)
             end_price = price_df['close'].asfreq('B').shift(21).iloc[-1]
             
             # Fallbacks
             if pd.isna(start_price):
                 start_price = price_df['close'].iloc[0]
             if pd.isna(end_price):
-                end_price = price_df['close'].iloc[-1] # Fallback to current if data too short
+                end_price = price_df['close'].iloc[-1]
             
             absolute_mom = (end_price / start_price) - 1
             
             # Relative Momentum
             momentum_12m = absolute_mom - self.spy_mom if self.spy_mom is not None else absolute_mom
             
-            # Simple Volatility (Inverse of 20d StdDev)
+            # Volatility
             volatility = price_df['close'].pct_change().tail(20).std()
             
-            # 2. Value & Quality (Fundamental Data)
-            # We need to fetch fundamentals first if not present
-            self.fund.fetch_fundamentals(ticker)
-            
-            # Fetch Augmented Metrics for Z-Score
-            metrics = self.fund.get_latest_metrics(ticker, [
-                'Net Income', 'Stockholders Equity', 'Total Equity Gross Minority Interest',
-                'Ebit', 'Total Assets', 'Current Assets', 'Current Liabilities',
-                'Retained Earnings', 'Total Revenue', 'Total Debt', 'Total Liabilities Net Minority Interest'
-            ])
-            
-            # We need Market Cap for Value (Price * Shares). 
-            # yfinance provides marketCap in 'info' but we are avoiding slow API calls for every single thing.
-            # Approximation: Net Income / Price? No, that's E/P. 
-            # Let's rely on basic accounting ratios if we can, or just use Price relative to Book.
-            
-            # P/B Ratio = Market Cap / Total Equity = Price / (Total Equity / Shares)
-            # This is hard without share count. 
-            # Alternative: ROI (Return on Investment) or ROE (Return on Equity)
-            # Quality: ROE = Net Income / Total Equity
+            # Fundamentals from Batch
+            metrics = batch_fundamentals.get(ticker, {})
             
             net_income = metrics.get('Net Income')
-            # Try multiple keys for Equity
             equity = metrics.get('Stockholders Equity') or metrics.get('Total Equity Gross Minority Interest')
             
             roe = np.nan
@@ -103,7 +87,6 @@ class CoreEngine:
                 roe = net_income / equity
                 
             # --- ALTMAN Z-SCORE CALCULATION ---
-            # Z = 1.2A + 1.4B + 3.3C + 0.6D + 1.0E
             z_score = np.nan
             try:
                 total_assets = metrics.get('Total Assets')
@@ -114,51 +97,28 @@ class CoreEngine:
                 total_liab = metrics.get('Total Liabilities Net Minority Interest') or (total_assets - equity if total_assets and equity else None)
                 revenue = metrics.get('Total Revenue')
                 
-                market_cap = current_price * metrics.get('Basic Average Shares', 0) if metrics.get('Basic Average Shares') else None
-                # Approx Market Cap if shares missing? No, rely on price. 
-                # Actually we don't have shares here easily unless we fetch 'Basic Average Shares' too.
-                # Let's hope logic above or below gets it. I'll stick to 0 if missing for safety.
-                # Wait, I didn't verify I have shares in this loop.
-                # Let's assume Market Cap is needed.
-                # To save API calls, we might skip D component or use Book Equity as proxy? 
-                # No, Z-score relies on Market Value of Equity.
-                # Let's assume we can get shares, I added it to the fetch list in prev step? No I missed it in chunk 1 replacement list.
-                # I will add 'Basic Average Shares' to the list implicitly or in code.
-                pass 
-                
-                # Let's re-add 'Basic Average Shares' to metrics fetch list in code block 1 properly? 
-                # Or just proceed. If I edit chunk 1, I can add it.
-                
                 if total_assets and total_assets > 0:
                     A = (current_assets - current_liab) / total_assets if (current_assets and current_liab) else 0
                     B = retained_earnings / total_assets if retained_earnings else 0
                     C = ebit / total_assets if ebit else 0
                     
                     # D: Market Value Equity / Total Liab
-                    # We need shares. Let's try to fetch it if missing.
-                    # Or use a simplified D = Equity / Liab (Book Z-Score). 
-                    # Greenblatt prefers Market, but for robust code without shares...
-                    # Let's use Book Equity as a safe floor proxy if Market Cap is unknown.
-                    D = (equity / total_liab) if (equity and total_liab and total_liab > 0) else 0.0 
+                    # Use Book Equity as safe proxy if no shares data, or if shares data exists, use Market Cap
+                    shares = metrics.get('Basic Average Shares')
+                    if shares:
+                        market_cap = current_price * shares
+                        D = market_cap / total_liab if (total_liab and total_liab > 0) else 0.0
+                    else:
+                        # Fallback to Book Equity
+                        D = (equity / total_liab) if (equity and total_liab and total_liab > 0) else 0.0 
                     
                     E = revenue / total_assets if revenue else 0
                     
                     z_score = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0*E
-            except Exception as e:
-                # print(f"Z-Score error for {ticker}: {e}")
+            except Exception:
                 pass
-                
-            # Value proxy: For now, we might lack Shares Outstanding in our light DB.
-            # We will use "Price vs 52w High" as a value/reversion proxy or rely on pre-computed P/E if we had it.
-            # Let's stick to Factors we can compute: Momentum, Volatility, ROE.
-            # To get P/E or P/B properly, we need Shares Outstanding. 
-            # I'll update MarketDataFetcher to try and get 'shares' from info if crucial, 
-            # but for now let's build the framework with what we have.
             
             data.append({
-                'ticker': ticker,
-                'momentum_12m': momentum_12m,
-                'volatility': volatility,
                 'ticker': ticker,
                 'momentum_12m': momentum_12m,
                 'volatility': volatility,
@@ -174,21 +134,16 @@ class CoreEngine:
         Ranks stocks based on weighted Z-scores of factors AND adds TA overlay.
         """
         if weights is None:
-            # ... existing weights ...
             weights = {
                 'momentum_12m': 0.4,
-                'momentum_12m': 0.4,
-                'roe': 0.2,      # Reduced to make room for Z-Score
-                'z_score': 0.2,  # New Quality metric
+                'roe': 0.2,
+                'z_score': 0.2,
                 'volatility': -0.2 
             }
             
         df = self.calculate_factors(tickers)
         if df.empty:
             return df
-        
-        print("DEBUG: Raw Factor Data Frame:")
-        print(df[['ticker', 'momentum_12m', 'roe', 'z_score', 'volatility']])
         
         # Normalize (Z-Score)
         scaler = StandardScaler()
@@ -206,23 +161,24 @@ class CoreEngine:
         
         # --- TA OVERLAY ---
         # For the top 20 stocks, we calculate TA Signal
-        # This prevents fetching full history for everything if list is huge
+        # Use local DB strictly
         ta_signals = []
         for index, row in df.iterrows():
-            # We need full history for MA200 (at least 200 bars)
-            price_df = self.market.fetch_data(row['ticker'], period="2y")
-            
-            # Smart Check: If cache is too short despite asking for 2y, Force Download
-            if len(price_df) < 250: # 1 trading year approx
-                 print(f"Cache too short for {row['ticker']} ({len(price_df)}), forcing full history...")
-                 price_df = self.market.fetch_data(row['ticker'], period="2y", force_download=True)
+            if index >= 20: # Optimization: Only TA check top 20
+                ta_signals.append({'trend_status': 'N/A', 'ta_action': 'Hold'})
+                continue
+
+            price_df = self.store.get_market_data(row['ticker'])
+            if len(price_df) < 50:
+                 ta_signals.append({'trend_status': 'Insuff. Data', 'ta_action': 'Wait'})
+                 continue
 
             price_df = TechnicalAnalysis.add_indicators(price_df)
             setup = TechnicalAnalysis.check_trend_setup(price_df)
             
             ta_signals.append({
-                'trend_status': setup['trend'], # Bullish/Bearish (SMA200)
-                'ta_action': setup['ta_signal'] # Buy/Wait
+                'trend_status': setup['trend'],
+                'ta_action': setup['ta_signal']
             })
             
         ta_df = pd.DataFrame(ta_signals)
@@ -232,30 +188,27 @@ class CoreEngine:
 
     def rank_magic_formula(self, tickers: list) -> pd.DataFrame:
         """
-        Ranks stocks based on Joel Greenblatt's Magic Formula.
-        Strategy:
-        1. Try Strict: Earnings Yield = EBIT / EV, ROC = EBIT / (Total Assets - Current Liab)
-        2. Fallback:  Earnings Yield = EPS / Price, ROC = ROA
+        Ranks stocks based on Joel Greenblatt's Magic Formula using LOCAL DB.
         """
         data = []
         
+        # Batch Fetch
+        mf_metrics = [
+            'Ebit', 'Net Income', 'Total Debt', 'Total Equity Gross Minority Interest',
+            'Cash And Cash Equivalents', 'Total Assets', 'Current Liabilities',
+            'Basic Average Shares', 'Diluted EPS'
+        ]
+        batch_fundamentals = self.store.get_latest_fundamentals(tickers, mf_metrics)
+
         for ticker in tickers:
             # 1. Price
-            current_price = self.market.get_price(ticker)
-            if not current_price:
+            price_df = self.store.get_market_data(ticker)
+            if price_df.empty:
                 continue
+            current_price = price_df['close'].iloc[-1]
                 
             # 2. Fundamentals
-            self.fund.fetch_fundamentals(ticker) 
-            # Requests for Strict + Fallback metrics
-            # yfinance metric names can vary, we ask for common ones
-            metrics = self.fund.get_latest_metrics(ticker, [
-                'Ebit', 'Net Income', 
-                'Total Debt', 'Total Equity Gross Minority Interest',
-                'Cash And Cash Equivalents', 
-                'Total Assets', 'Current Liabilities',
-                'Basic Average Shares', 'Diluted EPS'
-            ])
+            metrics = batch_fundamentals.get(ticker, {})
             
             roc = np.nan
             ey = np.nan
@@ -271,11 +224,8 @@ class CoreEngine:
                 current_liab = metrics.get('Current Liabilities')
                 
                 if ebit and shares and total_assets and current_liab:
-                    # Calculate EV
                     market_cap = current_price * shares
                     ev = market_cap + total_debt - cash
-                    
-                    # Calculate Capital Employed (Simplified: Assets - Current Liab)
                     capital_employed = total_assets - current_liab
                     
                     if ev > 0 and capital_employed > 0:
@@ -283,7 +233,7 @@ class CoreEngine:
                         roc = ebit / capital_employed
                         method = "Strict"
             except Exception:
-                pass # Fallback
+                pass
                 
             # --- FALLBACK TO PROXY ---
             if pd.isna(roc) or pd.isna(ey):
@@ -313,13 +263,80 @@ class CoreEngine:
         if df.empty:
             return df
             
-        # Ranking (Higher is better for both)
+        # Ranking
         df['rank_roc'] = df['roc'].rank(ascending=False)
         df['rank_ey'] = df['earnings_yield'].rank(ascending=False)
-        
-        # Magic Formula Score = Sum of Ranks (Lower is better)
         df['magic_score'] = df['rank_roc'] + df['rank_ey']
         df.sort_values('magic_score', ascending=True, inplace=True)
+        df.reset_index(drop=True, inplace=True)
+        
+        return df
+
+    def rank_garp(self, tickers: list) -> pd.DataFrame:
+        """
+        Ranks stocks based on GARP (Growth at Reasonable Price) using LOCAL DB.
+        Criteria:
+        1. PEG < 2.0 (Lower is better)
+        2. Revenue Growth > 15% (Higher is better)
+        """
+        data = []
+        
+        # 1. Batch Fetch Reference Data (PEG, Growth)
+        batch_info = self.store.get_latest_stock_info(tickers)
+        
+        # 2. Batch Fetch Fundamentals (ROE)
+        # We want ROE as a quality check
+        batch_fundamentals = self.store.get_latest_fundamentals(tickers, ['Net Income', 'Stockholders Equity'])
+        
+        for ticker in tickers:
+            # Price
+            price_df = self.store.get_market_data(ticker)
+            if price_df.empty:
+                continue
+            current_price = price_df['close'].iloc[-1]
+            
+            # Info
+            info = batch_info.get(ticker, {})
+            peg = info.get('peg_ratio')
+            growth = info.get('revenue_growth')
+            
+            # Fundamentals
+            fund = batch_fundamentals.get(ticker, {})
+            net_income = fund.get('Net Income')
+            equity = fund.get('Stockholders Equity')
+            
+            roe = np.nan
+            if net_income and equity and equity != 0:
+                roe = net_income / equity
+                
+            # Filter Logic (Optional: or just score everything)
+            # Let's include everything that has valid PEG/Growth
+            if pd.isna(peg) or pd.isna(growth):
+                continue
+                
+            data.append({
+                'ticker': ticker,
+                'peg': peg,
+                'growth': growth,
+                'roe': roe,
+                'close': current_price
+            })
+            
+        df = pd.DataFrame(data)
+        if df.empty:
+            return df
+            
+        # Ranking
+        # PEG: Lower is better. Rank Ascending.
+        df['rank_peg'] = df['peg'].rank(ascending=True)
+        
+        # Growth: Higher is better. Rank Descending.
+        df['rank_growth'] = df['growth'].rank(ascending=False)
+        
+        # Composite GARP Score (Lower is better sum of ranks)
+        df['garp_score'] = df['rank_peg'] + df['rank_growth'] 
+        
+        df.sort_values('garp_score', ascending=True, inplace=True)
         df.reset_index(drop=True, inplace=True)
         
         return df
