@@ -13,6 +13,19 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- BACKGROUND SERVICES ---
+from src.utils.scheduler import SyncScheduler
+
+@st.cache_resource
+def start_scheduler():
+    scheduler = SyncScheduler()
+    # It will verify config and start if enabled
+    scheduler.start()
+    return scheduler
+
+# Initialize Background Scheduler (Singleton)
+_ = start_scheduler()
+
 # Sidebar
 st.sidebar.title("My Personal Quant")
 st.sidebar.markdown("---")

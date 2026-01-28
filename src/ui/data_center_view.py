@@ -6,6 +6,7 @@ from src.data.batch_updater import BatchUpdater
 from src.data.store import DataStore
 from src.data.watchlist_manager import WatchlistManager
 import time
+from pathlib import Path
 
 def render():
     st.title("📊 Dashboard & Data Center")
@@ -136,42 +137,115 @@ def render():
     
     st.info(f"Targeting **{len(combined_list)}** stocks (S&P500 + Nasdaq + Watchlist). Last Info Sync: **{last_updated_str}**")
 
-    tab1, tab2 = st.tabs(["Manual Sync", "Auto Sync (Config)"])
+    st.markdown("---")
+    st.subheader("Step 1: Select Scope")
     
-    with tab1:
-        st.caption("Trigger a full update of Price History (2Y) and Fundamentals now.")
-        if st.button("🚀 Start Full Batch Sync", type="primary"):
-            status_box = st.empty()
-            progress_bar = st.progress(0)
-            
-            # 1. Price Sync
-            status_box.text("Step 1/2: Batch Downloading Price History...")
-            updater.update_price_history(combined_list)
-            progress_bar.progress(50)
-            
-            # 2. Fundamental Sync
-            status_box.text("Step 2/2: Fetching Fundamentals & Info...")
-            chunk_size = 10
-            for i in range(0, len(combined_list), chunk_size):
-                chunk = combined_list[i : i+chunk_size]
-                updater.update_fundamentals_and_info(chunk, max_workers=5)
+    # Scheduler Instance (Singleton) & Config
+    from src.utils.scheduler import SyncScheduler
+    scheduler = SyncScheduler()
+    current_config = scheduler.load_config()
+    
+    # Discover available universes
+    u_dir = Path("src/data/universes")
+    available_univ = [f.stem for f in u_dir.glob("*.json")]
+    
+    # Default to config if available, else watchlist
+    config_targets = current_config.get("targets", ["watchlist"])
+    valid_defaults = [t for t in config_targets if t in available_univ]
+    
+    # 1. SHARED SELECTION
+    selected_universes = st.multiselect(
+        "Choose Universes to Sync:",
+        options=available_univ,
+        default=valid_defaults,
+        help="This selection applies to both Manual and Auto-Sync."
+    )
+    
+    st.subheader("Step 2: Choose Sync Method")
+    sync_mode = st.radio("Mode:", ["Manual Trigger", "Auto-Schedule (Background)"], horizontal=True)
+    
+    if sync_mode == "Manual Trigger":
+        st.markdown("**Manual Mode**: Run a batch update right now.")
+        if st.button("🚀 Start Immediate Sync", type="primary"):
+            if not selected_universes:
+                st.warning("Please select at least one universe in Step 1.")
+            else:
+                # Execution Logic
+                manual_combined = set()
+                for t in selected_universes:
+                    manual_combined.update(um.load_universe(t))
                 
-                pct = 50 + int((i / len(combined_list)) * 50)
-                progress_bar.progress(min(pct, 99))
-                status_box.text(f"Step 2/2: Processing {i}/{len(combined_list)}...")
+                target_list = sorted(list(manual_combined))
                 
-            progress_bar.progress(100)
-            status_box.success("✅ Sync Complete!")
-            time.sleep(1)
+                if not target_list:
+                    st.warning("Selected universes are empty.")
+                else:
+                    status_box = st.empty()
+                    progress_bar = st.progress(0)
+                    
+                    st.info(f"Starting sync for **{len(target_list)}** tickers...")
+                    
+                    # 1. Price Sync
+                    status_box.text("Phase 1: Batch Downloading Prices...")
+                    updater.update_price_history(target_list)
+                    progress_bar.progress(50)
+                    
+                    # 2. Fundamental Sync
+                    status_box.text("Phase 2: Fetching Fundamentals & Info...")
+                    chunk_size = 10
+                    for i in range(0, len(target_list), chunk_size):
+                        chunk = target_list[i : i+chunk_size]
+                        updater.update_fundamentals_and_info(chunk, max_workers=5)
+                        
+                        pct = 50 + int((i / len(target_list)) * 50)
+                        progress_bar.progress(min(pct, 99))
+                        status_box.text(f"Phase 2: Processing {i}/{len(target_list)}...")
+                        
+                    progress_bar.progress(100)
+                    status_box.success("✅ Sync Complete!")
+                    time.sleep(1)
+                    st.rerun()
+
+    else: # Auto-Schedule
+        st.markdown("**Auto Mode**: Configure background daily updates.")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            is_enabled = st.toggle("Enable Auto-Sync", value=current_config.get("enabled", False))
+        with c2:
+             # Time Schedule
+            time_str = current_config.get("time", "06:00")
+            try:
+                default_time = datetime.strptime(time_str, "%H:%M").time()
+            except:
+                default_time = datetime.strptime("06:00", "%H:%M").time()
+            scheduled_time = st.time_input("Daily Run Time", value=default_time)
+            
+        if st.button("💾 Save Auto-Sync Configuration"):
+            new_config = {
+                "enabled": is_enabled,
+                "time": scheduled_time.strftime("%H:%M"),
+                "targets": selected_universes # Saves the shared selection
+            }
+            scheduler._save_config(new_config)
+            st.success("✅ Configuration & Scope Saved!")
+            
+            # Restart scheduler to apply changes
+            if scheduler.running:
+                scheduler.stop()
+                scheduler.start()
+            elif is_enabled:
+                scheduler.start()
+            
+            time.sleep(0.5)
             st.rerun()
             
-    with tab2:
-        st.warning("🚧 Auto-Sync is currently being implemented via OS Scheduler/Cron.")
-        st.markdown("""
-        **Plan:**
-        *   Run `daily_sync.py` at 06:00 AM.
-        *   This ensures data is ready before market open.
-        """)
+        # Status Monitor
+        st.caption("---")
+        st.caption("Service Status Monitor")
+        col_a, col_b = st.columns(2)
+        col_a.metric("Status", scheduler.status)
+        col_b.metric("Last Run", scheduler.last_run)
 
     st.divider()
     
