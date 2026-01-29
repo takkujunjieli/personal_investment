@@ -184,6 +184,24 @@ class CoreEngine:
         ta_df = pd.DataFrame(ta_signals)
         df = pd.concat([df, ta_df], axis=1)
         
+        # --- RANK CHANGE TRACKING ---
+        prev_ranks = self.store.get_previous_rankings("smart_beta")
+        changes = []
+        for rank, row in df.iterrows():
+            current_rank = rank + 1
+            ticker = row['ticker']
+            if ticker in prev_ranks:
+                prev_rank = prev_ranks[ticker]
+                change = prev_rank - current_rank # Positive means improved (e.g. 5 -> 2 = +3)
+            else:
+                change = None # New entry
+            changes.append(change)
+            
+        df['rank_change'] = changes
+        
+        # Save History
+        self.store.save_ranking_history("smart_beta", df)
+        
         return df
 
     def rank_magic_formula(self, tickers: list) -> pd.DataFrame:
@@ -269,6 +287,24 @@ class CoreEngine:
         df['magic_score'] = df['rank_roc'] + df['rank_ey']
         df.sort_values('magic_score', ascending=True, inplace=True)
         df.reset_index(drop=True, inplace=True)
+        
+        # --- RANK CHANGE TRACKING ---
+        prev_ranks = self.store.get_previous_rankings("magic_formula")
+        changes = []
+        for rank, row in df.iterrows():
+            current_rank = rank + 1
+            ticker = row['ticker']
+            if ticker in prev_ranks:
+                prev_rank = prev_ranks[ticker]
+                change = prev_rank - current_rank
+            else:
+                change = None
+            changes.append(change)
+            
+        df['rank_change'] = changes
+        
+        # Save History
+        self.store.save_ranking_history("magic_formula", df)
         
         return df
 

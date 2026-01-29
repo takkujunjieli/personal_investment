@@ -214,3 +214,91 @@ class DataStore:
         # Pivot table: Index=ticker, Columns=metric, Values=value
         pivot = df.pivot(index='ticker', columns='metric', values='value')
         return pivot.to_dict(orient='index')
+
+    def save_ranking_history(self, strategy: str, df: pd.DataFrame):
+        """
+        Saves the ranking results to the history table.
+        df must have 'ticker' and a score column (composite_score or magic_score).
+        We will also save the calculated rank (row number).
+        """
+        if df.empty:
+            return
+
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Ensure table exists (in case it wasn't created in init)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ranking_history (
+                strategy TEXT,
+                date TEXT,
+                ticker TEXT,
+                rank INTEGER,
+                score REAL,
+                PRIMARY KEY (strategy, date, ticker)
+            )
+        ''')
+        
+        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        
+        records = []
+        for rank, row in df.iterrows():
+            # Rank is 0-indexed in iterrows if reset_index was called, so rank+1
+            # But let's be safe and assume the caller sorts it. 
+            # actually the caller usually does reset_index(drop=True), so index is 0,1,2...
+            # The official rank is index + 1
+            
+            score = row.get('composite_score') if 'composite_score' in row else row.get('magic_score', 0)
+            
+            records.append((
+                strategy,
+                today,
+                row['ticker'],
+                rank + 1, # 1-based rank
+                score
+            ))
+            
+        try:
+            cursor.executemany('''
+                INSERT OR REPLACE INTO ranking_history (strategy, date, ticker, rank, score)
+                VALUES (?, ?, ?, ?, ?)
+            ''', records)
+            conn.commit()
+        except Exception as e:
+            print(f"Error saving ranking history: {e}")
+        finally:
+            conn.close()
+
+    def get_previous_rankings(self, strategy: str) -> dict:
+        """
+        Returns {ticker: rank} for the most recent run BEFORE today.
+        """
+        conn = self._get_conn()
+        today = pd.Timestamp.now().strftime('%Y-%m-%d')
+        
+        # Find latest date that is NOT today
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT MAX(date) FROM ranking_history 
+            WHERE strategy = ? AND date < ?
+        ''', (strategy, today))
+        
+        result = cursor.fetchone()
+        last_date = result[0] if result else None
+        
+        if not last_date:
+            conn.close()
+            return {}
+            
+        # Fetch rankings for that date
+        df = pd.read_sql_query('''
+            SELECT ticker, rank FROM ranking_history
+            WHERE strategy = ? AND date = ?
+        ''', conn, params=(strategy, last_date))
+        
+        conn.close()
+        
+        if df.empty:
+            return {}
+            
+        return df.set_index('ticker')['rank'].to_dict()

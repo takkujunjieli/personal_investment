@@ -19,8 +19,18 @@ def run_analysis(tickers):
     
     # Top Ranked
     st.subheader("Top Ranked Stocks (with TA Overlay)")
+    
+    # Format Rank Change
+    def format_change(x):
+        if pd.isna(x): return "New"
+        if x > 0: return f"⬆️ {int(x)}"
+        if x < 0: return f"⬇️ {abs(int(x))}"
+        return "➖"
+
+    df['change_fmt'] = df['rank_change'].apply(format_change)
+    
     st.dataframe(
-        df[['ticker', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
+        df[['ticker', 'change_fmt', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
             'composite_score': '{:.2f}',
             'momentum_12m': '{:.2%}',
             'roe': '{:.2%}',
@@ -30,6 +40,9 @@ def run_analysis(tickers):
         }).map(
             lambda x: 'color: green' if x == 'Buy (Trend)' or x == 'Buy (Support Bounce)' else 'color: red' if x == 'Sell / Avoid' else '',
             subset=['ta_action']
+        ).map(
+            lambda x: 'color: green' if "⬆️" in str(x) else 'color: red' if "⬇️" in str(x) else 'color: gray',
+            subset=['change_fmt']
         ),
         width='stretch'
     )
@@ -79,12 +92,24 @@ def run_magic_formula_analysis(tickers):
     st.markdown("Score = Rank(ROC) + Rank(Earnings Yield)")
     
     # Format and show
-    st.dataframe(df[['ticker', 'magic_score', 'roc', 'earnings_yield', 'close', 'method']].head(15).style.format({
+    # Format and show
+    def format_change(x):
+        if pd.isna(x): return "New"
+        if x > 0: return f"⬆️ {int(x)}"
+        if x < 0: return f"⬇️ {abs(int(x))}"
+        return "➖"
+
+    df['change_fmt'] = df['rank_change'].apply(format_change)
+
+    st.dataframe(df[['ticker', 'change_fmt', 'magic_score', 'roc', 'earnings_yield', 'close', 'method']].head(15).style.format({
         'roc': '{:.2%}',
         'earnings_yield': '{:.2%}',
         'close': '${:.2f}',
         'magic_score': '{:.0f}'
-    }))
+    }).map(
+        lambda x: 'color: green' if "⬆️" in str(x) else 'color: red' if "⬇️" in str(x) else 'color: gray',
+        subset=['change_fmt']
+    ))
     
     st.subheader("Visualization: Quality vs Value")
     fig = px.scatter(
