@@ -29,7 +29,7 @@ _ = start_scheduler()
 # Sidebar
 st.sidebar.title("My Personal Quant")
 st.sidebar.markdown("---")
-page = st.sidebar.radio("Navigation", ["Dashboard", "Long-Term Strategy", "Short-Term (Sniper)", "Data Inspector", "Backtest Lab"])
+page = st.sidebar.radio("Navigation", ["Dashboard", "Strategy Lab", "Backtest Lab"])
 
 # --- ANALYSIS SCOPE ---
 st.sidebar.markdown("---")
@@ -134,20 +134,14 @@ with st.sidebar.expander("🧮 Trade Sizer", expanded=False):
                 st.error("⚠️ Leverage Required!")
 
 # Routing
+# Routing
 if page == "Dashboard":
     from src.ui import data_center_view
     data_center_view.render()
 
-elif page == "Long-Term Strategy":
-    long_term_view.render(tickers)
-
-elif page == "Short-Term (Sniper)":
-    short_term_view.render(tickers)
-
-elif page == "Data Inspector":
-    from src.ui import data_inspector_view
-    data_inspector_view.render(tickers)
-
+elif page == "Strategy Lab":
+    from src.ui import strategy_lab_view
+    strategy_lab_view.render(tickers)
 
 elif page == "Backtest Lab":
     from src.ui import backtest_view
