@@ -66,6 +66,18 @@ class DataStore:
                 last_updated TEXT
             )
         ''')
+        
+        # Ranking History Table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ranking_history (
+                strategy TEXT,
+                date TEXT,
+                ticker TEXT,
+                rank INTEGER,
+                score REAL,
+                PRIMARY KEY (strategy, date, ticker)
+            )
+        ''')
 
         conn.commit()
         conn.close()
