@@ -50,6 +50,42 @@ selected_universes = st.sidebar.multiselect(
     default=["watchlist"] if "watchlist" in universe_files else None
 )
 
+# 3. Time Scope
+time_span = st.sidebar.select_slider(
+    "Time Span:",
+    options=["1y", "3y", "5y"],
+    value="1y"
+)
+st.session_state['analysis_span'] = time_span
+
+# 4. Manual Sync (Moved from Data Center)
+if st.sidebar.button("🔄 Sync Selected Universe"):
+    with st.sidebar.status("Syncing Data...") as status:
+        from src.data.market_data import MarketDataFetcher
+        fetcher = MarketDataFetcher()
+        
+        # Load Tickers for Sync
+        temp_tickers = set()
+        um_sync = UniverseManager()
+        if not selected_universes:
+            st.warning("No universe selected.")
+        else:
+            for u in selected_universes:
+                t_list = um_sync.load_universe(u)
+                temp_tickers.update(t_list)
+            
+            # Run Sync
+            total = len(temp_tickers)
+            progress_bar = st.progress(0)
+            
+            for i, t in enumerate(temp_tickers):
+                status.write(f"Fetching {t}...")
+                fetcher.fetch_data(t, period=time_span) # Use selected span or default to max? keeping logic simple
+                progress_bar.progress((i + 1) / total)
+            
+            status.update(label="Sync Complete!", state="complete", expanded=False)
+            st.rerun()
+
 # 3. Load & Merge Tickers
 active_tickers = set()
 um = UniverseManager() # Helper for consistency

@@ -49,6 +49,8 @@ def run_analysis(tickers):
     
     # Visualization
     st.subheader("Factor Map")
+    st.info("💡 **Tip**: Click on a dot to add it to the **Backtest Lab**!")
+    
     df["composite_score_abs"] = df["composite_score"].fillna(0).abs()
     fig = px.scatter(
         df, 
@@ -68,7 +70,23 @@ def run_analysis(tickers):
         },
         title="Quality (ROE) vs Momentum (Color=Score, Size=Score Magnitude)"
     )
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # Enable click events
+    event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+    
+    # Handle Selection
+    if event and event['selection']['points']:
+        point = event['selection']['points'][0]
+        selected_ticker = point['hovertext']
+        
+        if 'backtest_tickers' not in st.session_state:
+            st.session_state['backtest_tickers'] = []
+            
+        if selected_ticker not in st.session_state['backtest_tickers']:
+            st.session_state['backtest_tickers'].append(selected_ticker)
+            st.success(f"Added **{selected_ticker}** to Backtest Lab! 🧪")
+        else:
+            st.info(f"**{selected_ticker}** is already in Backtest Lab.")
     
     # Detailed Table
     st.subheader("Full Rankings")
