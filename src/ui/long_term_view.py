@@ -29,8 +29,11 @@ def run_analysis(tickers):
 
     df['change_fmt'] = df['rank_change'].apply(format_change)
     
+    # Add URL column for clickable ticker
+    df['ticker_url'] = df['ticker'].apply(lambda x: f"https://finance.yahoo.com/quote/{x}")
+    
     st.dataframe(
-        df[['ticker', 'change_fmt', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
+        df[['ticker_url', 'change_fmt', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
             'composite_score': '{:.2f}',
             'momentum_12m': '{:.2%}',
             'roe': '{:.2%}',
@@ -44,7 +47,13 @@ def run_analysis(tickers):
             lambda x: 'color: green' if "⬆️" in str(x) else 'color: red' if "⬇️" in str(x) else 'color: gray',
             subset=['change_fmt']
         ),
-        width='stretch'
+
+        column_config={
+            "ticker_url": st.column_config.LinkColumn(
+                "Ticker", display_text="https://finance.yahoo.com/quote/(.*)"
+            )
+        },
+        use_container_width=True
     )
     
     # Visualization

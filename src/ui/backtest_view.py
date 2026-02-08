@@ -88,9 +88,15 @@ def render(tickers):
                 
                 # 4. Plot Equity Curve
                 st.subheader("Equity Curve")
+                
+                # Align indices explicitly to avoid "Length of values does not match length of index" error
+                s_strat = metrics['equity_curve']
+                s_bench = metrics['benchmark_curve']
+                common_idx = s_strat.index.union(s_bench.index)
+                
                 equity_df = pd.DataFrame({
-                    'Strategy': metrics['equity_curve'],
-                    'Benchmark (Equal Weight)': metrics['benchmark_curve']
+                    'Strategy': s_strat.reindex(common_idx),
+                    'Benchmark (Equal Weight)': s_bench.reindex(common_idx)
                 })
                 
                 fig = px.line(equity_df, title=f"Portfolio Value ({strategy_name})")
