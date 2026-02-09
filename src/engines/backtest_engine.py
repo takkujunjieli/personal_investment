@@ -96,6 +96,7 @@ class BacktestEngine:
         metrics = BacktestEngine.calculate_metrics(portfolio_returns)
         metrics['equity_curve'] = (1 + portfolio_returns).cumprod()
         metrics['daily_returns'] = portfolio_returns
+        metrics['positions'] = weights # Return weights for signal visualization
         
         # Benchmark (Equal Weight of Universe)
         benchmark_ret = returns_df.mean(axis=1)
