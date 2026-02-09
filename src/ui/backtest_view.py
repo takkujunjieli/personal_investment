@@ -132,7 +132,7 @@ def render(tickers):
                 ])
             )
             
-            fig.update_layout(hovermode="x unified") # Comparison mode
+            fig.update_layout(hovermode="closest") # Show tooltip for the nearest point only
             
             st.plotly_chart(fig, use_container_width=True)
             
