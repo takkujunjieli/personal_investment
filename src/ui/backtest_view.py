@@ -48,67 +48,105 @@ def render(tickers):
                 
     st.markdown("---")
 
-    if st.button("🚀 Run Portfolio Backtest", type="primary"):
+    if st.button("🚀 Run Backtest", type="primary"):
         if not selected_assets:
             st.warning("Please select at least one asset.")
             return
 
         with st.spinner(f"Simulating Strategy on {len(selected_assets)} assets..."):
-            # 1. Fetch Data for all assets
-            market_data = {}
+            # Prepare to collect results
+            all_results = []
+            
             # Check for Analysis Span
             period = st.session_state.get('analysis_span', '1y')
             
             progress = st.progress(0)
-            for i, t in enumerate(selected_assets):
-                df = fetcher.fetch_data(t, period=period)
-                if not df.empty:
-                    market_data[t] = df
+            
+            for i, ticker in enumerate(selected_assets):
+                # 1. Fetch Data
+                df = fetcher.fetch_data(ticker, period=period)
+                if df.empty:
+                    continue
+                
+                # 2. Run Single Asset Logic (Reusing Portfolio Logic on Single Asset)
+                # We can mock a single-asset "portfolio" to reuse the engine, 
+                # or better yet, just extract the calculation logic. 
+                # For simplicity/robustness, we'll treat it as a 1-asset portfolio 
+                # to leverage existing `run_portfolio_backtest`.
+                market_data = {ticker: df}
+                
+                try:
+                    metrics = BacktestEngine.run_portfolio_backtest(market_data, selected_strategy, **params)
+                    
+                    if metrics and 'equity_curve' in metrics:
+                        # Convert equity curve to cumulative return % (Equity - 1)
+                        # Equity starts at 1.0. 1.10 means 10% return.
+                        equity_series = metrics['equity_curve']
+                        cum_ret_series = (equity_series - 1) * 100 # In Percent
+                        
+                        # Create a temp df for this ticker
+                        temp_df = pd.DataFrame({
+                            'Date': cum_ret_series.index,
+                            'Return (%)': cum_ret_series.values,
+                            'Ticker': ticker,
+                            # Constant metrics for hover
+                            'Total Return': metrics['total_return'],
+                            'Sharpe': metrics['sharpe_ratio'],
+                            'Max Drawdown': metrics['max_drawdown']
+                        })
+                        all_results.append(temp_df)
+                        
+                except Exception as e:
+                    st.error(f"Error backtesting {ticker}: {str(e)}")
+                
                 progress.progress((i + 1) / len(selected_assets))
             
-            if not market_data:
-                st.error("No data found for selected assets.")
+            if not all_results:
+                st.error("No valid backtest results generated.")
                 return
+
+            # Combine all results
+            final_df = pd.concat(all_results, ignore_index=True)
             
-            # 2. Run Engine
-            try:
-                metrics = BacktestEngine.run_portfolio_backtest(market_data, selected_strategy, **params)
-                
-                if not metrics:
-                    st.warning("Backtest returned no metrics (insufficient data?).")
-                    return
-                
-                # 3. Display Metrics
-                st.subheader("Performance Metrics")
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total Return", f"{metrics['total_return']:.2%}")
-                c2.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}")
-                c3.metric("Max Drawdown", f"{metrics['max_drawdown']:.2%}")
-                c4.metric("Volatility (Ann.)", f"{metrics['volatility']:.2%}")
-                
-                # 4. Plot Equity Curve
-                st.subheader("Equity Curve")
-                
-                # Align indices explicitly to avoid "Length of values does not match length of index" error
-                s_strat = metrics['equity_curve']
-                s_bench = metrics['benchmark_curve']
-                common_idx = s_strat.index.union(s_bench.index)
-                
-                equity_df = pd.DataFrame({
-                    'Strategy': s_strat.reindex(common_idx),
-                    'Benchmark (Equal Weight)': s_bench.reindex(common_idx)
+            # 3. Plot Multi-Line Chart
+            st.subheader("Performance Comparison")
+            
+            fig = px.line(
+                final_df, 
+                x="Date", 
+                y="Return (%)", 
+                color="Ticker",
+                title=f"Strategy Performance: {strategy_name}",
+                custom_data=['Ticker', 'Total Return', 'Sharpe', 'Max Drawdown']
+            )
+            
+            # Customize Hover
+            fig.update_traces(
+                hovertemplate="<br>".join([
+                    "<b>%{customdata[0]}</b>",
+                    "Date: %{x|%Y-%m-%d}",
+                    "Cum Return: %{y:.2f}%",
+                    "Total Return: %{customdata[1]:.2%}",
+                    "Sharpe Ratio: %{customdata[2]:.2f}",
+                    "Max Drawdown: %{customdata[3]:.2%}"
+                ])
+            )
+            
+            fig.update_layout(hovermode="x unified") # Comparison mode
+            
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Optional: Summary Table
+            st.subheader("Metrics Summary")
+            summary_data = []
+            for res in all_results:
+                # Take the first row (since metrics are constant columns)
+                first_row = res.iloc[0]
+                summary_data.append({
+                    "Ticker": first_row['Ticker'],
+                    "Total Return": f"{first_row['Total Return']:.2%}",
+                    "Sharpe": f"{first_row['Sharpe']:.2f}",
+                    "Max Drawdown": f"{first_row['Max Drawdown']:.2%}"
                 })
-                
-                fig = px.line(equity_df, title=f"Portfolio Value ({strategy_name})")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # 5. Show Signal Heatmap (Bonus)
-                with st.expander("🔎 Trade Signals Debugger", expanded=False):
-                    # We can re-run strategy logic to get raw signals for visualization
-                    # or update engine to return them. For now, let's just show returns
-                    st.write("Daily Portfolio Returns:")
-                    st.line_chart(metrics['daily_returns'])
-                    
-            except Exception as e:
-                st.error(f"Backtest Error: {str(e)}")
-                # st.exception(e)
+            
+            st.dataframe(pd.DataFrame(summary_data))

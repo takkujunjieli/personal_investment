@@ -3,6 +3,8 @@ import pandas as pd
 import plotly.express as px
 from src.engines.core_engine import CoreEngine
 
+
+
 def run_analysis(tickers):
     """
     Executes the Smart Beta analysis and renders results.
@@ -29,11 +31,25 @@ def run_analysis(tickers):
 
     df['change_fmt'] = df['rank_change'].apply(format_change)
     
-    # Add URL column for clickable ticker
-    df['ticker_url'] = df['ticker'].apply(lambda x: f"https://finance.yahoo.com/quote/{x}")
+    # Initialize backtest_tickers if not present
+    if 'backtest_tickers' not in st.session_state:
+        st.session_state['backtest_tickers'] = []
+        
+    # Add Checkbox Column for Backtest Lab
+    df['Add to Lab'] = df['ticker'].isin(st.session_state['backtest_tickers'])
     
-    st.dataframe(
-        df[['ticker_url', 'change_fmt', 'composite_score', 'ta_action', 'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']].head(10).style.format({
+    # Prepare Dataframe for Editor (Top 10)
+    # We copy to avoid setting on a slice warning, though direct assignment above handles it usually.
+    # Select columns including the new 'Add to Lab'
+    display_cols = ['Add to Lab', 'ticker', 'change_fmt', 'composite_score', 'ta_action', 
+                   'trend_status', 'momentum_12m', 'roe', 'z_score', 'volatility', 'close']
+    
+    df_display = df[display_cols].head(10).copy()
+
+    # Configure Editor
+    # We use st.data_editor with disabled columns for everything except "Add to Lab"
+    edited_df = st.data_editor(
+        df_display.style.format({
             'composite_score': '{:.2f}',
             'momentum_12m': '{:.2%}',
             'roe': '{:.2%}',
@@ -47,18 +63,62 @@ def run_analysis(tickers):
             lambda x: 'color: green' if "⬆️" in str(x) else 'color: red' if "⬇️" in str(x) else 'color: gray',
             subset=['change_fmt']
         ),
-
         column_config={
-            "ticker_url": st.column_config.LinkColumn(
-                "Ticker", display_text="https://finance.yahoo.com/quote/(.*)"
-            )
+            "Add to Lab": st.column_config.CheckboxColumn(
+                "Add to Backtest?",
+                help="Check to add this stock to the Backtest Lab",
+                default=False,
+            ),
+            "ticker": st.column_config.TextColumn("Ticker", disabled=True),
+            "change_fmt": st.column_config.TextColumn("Rank Change", disabled=True),
+            "composite_score": st.column_config.NumberColumn("Score", disabled=True),
+            "ta_action": st.column_config.TextColumn("TA Action", disabled=True),
+            "trend_status": st.column_config.TextColumn("Trend", disabled=True),
+            "momentum_12m": st.column_config.NumberColumn("Momentum", disabled=True),
+            "roe": st.column_config.NumberColumn("ROE", disabled=True),
+            "z_score": st.column_config.NumberColumn("Z-Score", disabled=True),
+            "volatility": st.column_config.NumberColumn("Volatility", disabled=True),
+            "close": st.column_config.NumberColumn("Price", disabled=True),
         },
-        use_container_width=True
+        disabled=display_cols[1:], # Disable all except the first one ('Add to Lab')
+        hide_index=True,
+        use_container_width=True,
+        key="smart_beta_editor"
     )
+    
+    # Sync Logic
+    # We compare the edited_df with the session state
+    # Since edited_df ONLY contains the Top 10 (or whatever head(10) is),
+    # we only sync tickers present in this view.
+    
+    if edited_df is not None:
+        view_tickers = edited_df['ticker'].tolist()
+        
+        # Identify which ones are checked in the new view
+        selected_in_view = edited_df[edited_df['Add to Lab'] == True]['ticker'].tolist()
+        
+        # Identify which ones are UNchecked in the new view
+        unselected_in_view = edited_df[edited_df['Add to Lab'] == False]['ticker'].tolist()
+
+        # Update Session State
+        # 1. Add newly selected
+        for t in selected_in_view:
+            if t not in st.session_state['backtest_tickers']:
+                st.session_state['backtest_tickers'].append(t)
+        
+        # 2. Remove newly unselected
+        for t in unselected_in_view:
+            if t in st.session_state['backtest_tickers']:
+                st.session_state['backtest_tickers'].remove(t)
+                
+    # Feedback
+    count = len(st.session_state['backtest_tickers'])
+    if count > 0:
+        st.caption(f"🧪 **Backtest Lab**: {count} stock(s) selected ({', '.join(st.session_state['backtest_tickers'])})")
     
     # Visualization
     st.subheader("Factor Map")
-    st.info("💡 **Tip**: Click on a dot to add it to the **Backtest Lab**!")
+    st.info("💡 **Tip**: Select a stock in the table above to add it to **Backtest Lab**!")
     
     df["composite_score_abs"] = df["composite_score"].fillna(0).abs()
     fig = px.scatter(
@@ -80,22 +140,10 @@ def run_analysis(tickers):
         title="Quality (ROE) vs Momentum (Color=Score, Size=Score Magnitude)"
     )
     
-    # Enable click events
-    event = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+    # Enable click events (view only)
+    st.plotly_chart(fig, use_container_width=True)
     
-    # Handle Selection
-    if event and event['selection']['points']:
-        point = event['selection']['points'][0]
-        selected_ticker = point['hovertext']
-        
-        if 'backtest_tickers' not in st.session_state:
-            st.session_state['backtest_tickers'] = []
-            
-        if selected_ticker not in st.session_state['backtest_tickers']:
-            st.session_state['backtest_tickers'].append(selected_ticker)
-            st.success(f"Added **{selected_ticker}** to Backtest Lab! 🧪")
-        else:
-            st.info(f"**{selected_ticker}** is already in Backtest Lab.")
+    # Selection logic removed from chart
     
     # Detailed Table
     st.subheader("Full Rankings")
