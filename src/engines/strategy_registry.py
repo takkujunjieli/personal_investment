@@ -108,3 +108,89 @@ class RsiMeanReversionStrategy(Strategy):
             signals[ticker] = sig
             
         return signals
+
+class PeadStrategy(Strategy):
+    """
+    Post-Earnings Announcement Drift (Gap Strategy).
+    Buys when stock Gaps Up > Threshold. Holds for N Make.
+    """
+    @property
+    def name(self):
+        return "Event Driven (PEAD)"
+
+    @property
+    def default_params(self):
+        # gap_pct: 0.02 = 2% gap up
+        return {'gap_pct': 0.02, 'hold_days': 5}
+
+    def run(self, market_data: dict, gap_pct=0.02, hold_days=5) -> pd.DataFrame:
+        signals = pd.DataFrame(index=list(market_data.values())[0].index, columns=market_data.keys())
+        signals[:] = 0.0 # Initialize 0
+        
+        for ticker, df in market_data.items():
+            if len(df) < 2: continue
+            
+            # Gap Calculation: Today Open vs Yesterday Close
+            prev_close = df['close'].shift(1)
+            today_open = df['open']
+            
+            # Gap Return
+            gap = (today_open - prev_close) / prev_close
+            
+            # Component 1: Trigger
+            triggers = (gap > gap_pct).astype(int)
+            
+            # Component 2: Hold for N days
+            # We want to be long for 'hold_days' starting from the trigger day.
+            # rolling().max() allows us to extend a "1" signal forward.
+            # Note: rolling is backward looking. If we use forward hold, we need to be careful.
+            # Strategy: Trigger happens at Open. We enter at Open (or Close of that day). 
+            # If we assume we hold for 5 days *starting today*, then today + 4 days = 1.
+            
+            # Using rolling on the *trigger* works if we shift?
+            # Actually, `rolling(N).max()` on triggers gives 1 if a trigger happened in last N days.
+            # That is exactly "Hold for N days after trigger".
+            
+            active_signal = triggers.rolling(window=int(hold_days), min_periods=1).max()
+            
+            signals[ticker] = active_signal.fillna(0.0)
+            
+        return signals
+
+class LiquidityCrisisStrategy(Strategy):
+    """
+    Mean Reversion / Liquidity Crisis (VaR Breach).
+    Buys when Price Drops below historical 95% VaR (Tail Risk Event).
+    Reverts to mean (or bounces) quickly.
+    """
+    @property
+    def name(self):
+        return "Mean Reversion (VaR)"
+
+    @property
+    def default_params(self):
+        return {'lookback': 252, 'percentile': 0.05, 'hold_days': 5}
+
+    def run(self, market_data: dict, lookback=252, percentile=0.05, hold_days=5) -> pd.DataFrame:
+        signals = pd.DataFrame(index=list(market_data.values())[0].index, columns=market_data.keys())
+        signals[:] = 0.0
+        
+        for ticker, df in market_data.items():
+            if len(df) < lookback: continue
+            
+            # Calculate Returns
+            ret = df['close'].pct_change()
+            
+            # Calculate rolling VaR (percentile)
+            # Valid VaR for *today* is based on *yesterday's* window
+            rolling_var = ret.rolling(window=int(lookback)).quantile(percentile).shift(1)
+            
+            # Trigger: Return < VaR
+            triggers = (ret < rolling_var).astype(int)
+            
+            # Hold Logic
+            active_signal = triggers.rolling(window=int(hold_days), min_periods=1).max()
+            
+            signals[ticker] = active_signal.fillna(0.0)
+            
+        return signals

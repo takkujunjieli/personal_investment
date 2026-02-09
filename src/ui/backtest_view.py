@@ -3,7 +3,10 @@ import pandas as pd
 import plotly.express as px
 from src.data.market_data import MarketDataFetcher
 from src.engines.backtest_engine import BacktestEngine
-from src.engines.strategy_registry import SmaCrossStrategy, RsiMeanReversionStrategy
+from src.engines.strategy_registry import (
+    SmaCrossStrategy, RsiMeanReversionStrategy,
+    PeadStrategy, LiquidityCrisisStrategy
+)
 
 def render(tickers):
     st.header("Backtest Lab 🧪")
@@ -26,7 +29,9 @@ def render(tickers):
     with col2:
         strategies = {
             "SMA Trend Following": SmaCrossStrategy(),
-            "RSI Mean Reversion": RsiMeanReversionStrategy()
+            "RSI Mean Reversion": RsiMeanReversionStrategy(),
+            "Event Driven (PEAD)": PeadStrategy(),
+            "Mean Reversion (VaR)": LiquidityCrisisStrategy()
         }
         # Add Buy & Hold as a "Virtual" Strategy Option
         available_strats = ["Buy & Hold"] + list(strategies.keys())
@@ -40,29 +45,32 @@ def render(tickers):
 
     fetcher = MarketDataFetcher()
     
-    # 3. Strategy Configuration (Dynamic)
-    st.subheader("Strategy Parameters")
+    # 3. Strategy Configuration (Read-Only / Inherited from Strategy Lab)
+    # We no longer render widgets here. We pull from global state.
     
-    # Render parameters for each selected strategy (excluding Buy & Hold)
     active_strategies = {}
     strategy_params = {}
     
+    # Load Config from Session State
+    global_config = st.session_state.get('strategy_params', {})
+    
     for name in selected_strategy_names:
         if name in strategies:
-            active_strategies[name] = strategies[name]
-            # Use expander to organize params if multiple strategies or just general tidiness
-            with st.expander(f"⚙️ {name} Parameters", expanded=True):
-                params = active_strategies[name].default_params.copy()
-                cols = st.columns(len(params))
-                for i, (key, default_val) in enumerate(params.items()):
-                    with cols[i]:
-                        # Create unique key for widget
-                        widget_key = f"{name}_{key}"
-                        if isinstance(default_val, int):
-                            params[key] = st.number_input(key, value=default_val, step=1, key=widget_key)
-                        elif isinstance(default_val, float):
-                            params[key] = st.number_input(key, value=default_val, step=0.1, key=widget_key)
-                strategy_params[name] = params
+            strat = strategies[name]
+            active_strategies[name] = strat
+            # Get params from session or defaults
+            # Note: global_config keys are strat.name (e.g. "SMA Trend Following")
+            # matches 'name' from loop keys? Yes, keys in 'strategies' dict match strat.name property ideally.
+            # Let's verify: SmaCrossStrategy.name is "SMA Trend Following".
+            # The keys in `strategies` dict above match the `.name` property.
+            
+            p = global_config.get(name, strat.default_params)
+            strategy_params[name] = p
+            
+    # Display Active Configuration (Info/Expander)
+    if strategy_params:
+        with st.expander("ℹ️ Active Strategy Configuration (Edit in Strategy Lab)"):
+            st.json(strategy_params)
                 
     st.markdown("---")
 
