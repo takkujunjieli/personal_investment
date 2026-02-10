@@ -3,7 +3,9 @@ import pandas as pd
 from src.engines.stock_selection_engine import StockSelectionEngine
 from src.engines.strategy_registry import (
     SmaCrossStrategy, RsiMeanReversionStrategy, 
-    PeadStrategy, LiquidityCrisisStrategy
+    SmaCrossStrategy, RsiMeanReversionStrategy, 
+    PeadStrategy, LiquidityCrisisStrategy,
+    SentimentContrarianStrategy
 )
 
 def render(tickers):
@@ -136,7 +138,8 @@ def render(tickers):
             SmaCrossStrategy(),
             RsiMeanReversionStrategy(),
             PeadStrategy(),
-            LiquidityCrisisStrategy()
+            LiquidityCrisisStrategy(),
+            SentimentContrarianStrategy()
         ]
         
         # Load existing params from session or init
@@ -172,7 +175,7 @@ def render(tickers):
         # Scanner Section
         st.subheader("📡 Live Scanner")
         
-        col_scan1, col_scan2 = st.columns(2)
+        col_scan1, col_scan2, col_scan3 = st.columns(3)
         
         # Scanner 1: PEAD
         with col_scan1:
@@ -229,4 +232,39 @@ def render(tickers):
                     }))
                 else:
                     st.info("No VaR breaches found.")
+
+        # Scanner 3: Sentiment
+        with col_scan3:
+            st.markdown("#### Sentiment (Fear & Greed)")
+            st.caption("Contrarian Signal: Buy Fear, Sell Greed")
+            
+            if st.button("Check Market Emotion"):
+                # Get Params
+                sent_params = stored_params.get("Sentiment Contrarian", {})
+                
+                from src.engines.market_timing_engine import MarketTimingEngine
+                timing_engine = MarketTimingEngine()
+                
+                with st.spinner("Analyzing Market Sentiment (CNN)..."):
+                    result = timing_engine.scan_sentiment(**sent_params)
+                
+                if "error" in result:
+                    st.error(f"Error: {result['error']}")
+                else:
+                    score = result['score']
+                    rating = result['rating']
+                    signal = result['signal']
+                    action = result['action']
+                    color = result['color']
+                    ts = result['timestamp']
+                    
+                    st.metric("Fear & Greed Index", f"{score:.0f}", delta=rating)
+                    
+                    st.markdown(f"**Signal**: :{color}[{signal}]")
+                    st.markdown(f"**Action**: {action}")
+                    st.caption(f"Updated: {ts}")
+                    
+                    # meter visualization (simple progress bar)
+                    st.progress(int(score) / 100)
+                    st.caption("0 (Fear) --------------------- 100 (Greed)")
 

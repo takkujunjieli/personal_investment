@@ -4,13 +4,14 @@ from src.data.market_data import MarketDataFetcher
 from src.engines.ta_overlay import TechnicalAnalysis
 import yfinance as yf
 from datetime import datetime, timedelta
-from src.engines.strategy_registry import PeadStrategy, LiquidityCrisisStrategy
+from src.engines.strategy_registry import PeadStrategy, LiquidityCrisisStrategy, SentimentContrarianStrategy
 
 class MarketTimingEngine:
     def __init__(self):
         self.market = MarketDataFetcher()
         self.pead_strat = PeadStrategy()
         self.rev_strat = LiquidityCrisisStrategy()
+        self.sent_strat = SentimentContrarianStrategy()
 
     def scan_pead(self, tickers: list, **params) -> pd.DataFrame:
         """
@@ -161,3 +162,74 @@ class MarketTimingEngine:
                 })
                 
         return pd.DataFrame(candidates)
+
+    def fetch_fear_greed_index(self):
+        """
+        Fetches the latest Fear & Greed Index from CNN.
+        Returns: score (float), rating (str), timestamp (str)
+        """
+        try:
+            import requests
+            from datetime import datetime
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            # We fetch a recent start date to ensure we get the latest data point
+            # Just fetched "graphdata" usually returns full history? Not sure, but "graphdata/DATE" returns from DATE.
+            # Let's try to fetch just the latest index. 
+            # Actually, let's use the one that worked in tests: graphdata/{recent_date}
+            
+            start_date = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
+            url = f"https://production.dataviz.cnn.io/index/fearandgreed/graphdata/{start_date}"
+            
+            r = requests.get(url, headers=headers, timeout=5)
+            r.raise_for_status()
+            data = r.json()
+            
+            if 'fear_and_greed' in data:
+                latest = data['fear_and_greed']
+                return latest.get('score'), latest.get('rating'), latest.get('timestamp')
+        except Exception as e:
+            print(f"Error fetching FGI: {e}")
+            return None, None, None
+            
+        return None, None, None
+
+    def scan_sentiment(self, **params):
+        """
+        Scans current market sentiment.
+        """
+        # Merge defaults
+        config = self.sent_strat.default_params.copy()
+        config.update(params)
+        
+        buy_threshold = config.get('buy_threshold', 25)
+        sell_threshold = config.get('sell_threshold', 75)
+        
+        score, rating, timestamp = self.fetch_fear_greed_index()
+        
+        if score is None:
+            return {"error": "Could not fetch data"}
+            
+        signal = "NEUTRAL"
+        action = "Hold / Normal Allocation"
+        color = "gray"
+        
+        if score < buy_threshold:
+            signal = "EXTREME FEAR"
+            action = "BUY / Aggressive Allocation"
+            color = "green"
+        elif score > sell_threshold:
+            signal = "EXTREME GREED"
+            action = "SELL / Hedge / Defensive"
+            color = "red"
+            
+        return {
+            "score": score,
+            "rating": rating,
+            "signal": signal,
+            "action": action,
+            "color": color,
+            "timestamp": timestamp
+        }

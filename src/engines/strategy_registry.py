@@ -194,3 +194,56 @@ class LiquidityCrisisStrategy(Strategy):
             signals[ticker] = active_signal.fillna(0.0)
             
         return signals
+class SentimentContrarianStrategy(Strategy):
+    """
+    Contrarian Sentiment Strategy.
+    Buys when Market is in Extreme Fear (< 20).
+    Sells/Hedges when Market is in Extreme Greed (> 80).
+    """
+    @property
+    def name(self):
+        return "Sentiment Contrarian"
+
+    @property
+    def default_params(self):
+        return {'buy_threshold': 20, 'sell_threshold': 80}
+
+    def run(self, market_data: dict, buy_threshold=20, sell_threshold=80) -> pd.DataFrame:
+        # Expects market_data to contain a key like 'BENCHMARK' or we calculate based on single FGI value?
+        # For backtesting, we need a Series of FGI.
+        # If market_data has '^FGI', use it.
+        
+        # Initialize empty
+        sample_ticker = list(market_data.keys())[0] if market_data else "UNKNOWN"
+        idx = market_data[sample_ticker].index if market_data else []
+        signals = pd.DataFrame(index=idx, columns=market_data.keys())
+        signals[:] = 0.0
+        
+        # Check if we have FGI data
+        fgi_series = None
+        if '^FGI' in market_data:
+            fgi_series = market_data['^FGI']['close']
+        
+        if fgi_series is None:
+            # If no FGI data provided, we can't run backtest.
+            return signals
+            
+        # Logic
+        # Long if FGI < Buy Threshold (Extreme Fear)
+        # Sell if FGI > Sell Threshold (Extreme Greed)
+        # Else Neutral
+        
+        # Signal 1 = Long, 0 = Neutral
+        # We could also support Shorting (-1)
+        
+        long_condition = fgi_series < buy_threshold
+        
+        # Apply to all tickers? 
+        # Yes, this is a "Market State" filter.
+        # If Market is in Fear, we want to be Long (Contrarian).
+        
+        # Broadcaster signals to all tickers
+        for ticker in market_data:
+            signals[ticker] = np.where(long_condition, 1.0, 0.0)
+            
+        return signals
