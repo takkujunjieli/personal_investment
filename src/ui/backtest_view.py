@@ -322,11 +322,17 @@ def render(tickers):
             for _, row in unique_results.iterrows():
                 summary_data.append({
                     "Name": row['Legend Name'],
-                    # "Ticker": row['Ticker'],
-                    # "Strategy": row['Strategy'],
-                    "Total Return": f"{row['Total Return']:.2%}",
-                    "Sharpe": f"{row['Sharpe']:.2f}",
-                    "Max Drawdown": f"{row['Max Drawdown']:.2%}"
+                    "Total Return": row['Total Return'],
+                    "Sharpe": row['Sharpe'],
+                    "Max Drawdown": row['Max Drawdown']
                 })
             
-            st.dataframe(pd.DataFrame(summary_data))
+            st.dataframe(
+                pd.DataFrame(summary_data),
+                column_config={
+                    "Total Return": st.column_config.NumberColumn(format="%.2f%%"),
+                    "Sharpe": st.column_config.NumberColumn(format="%.2f"),
+                    "Max Drawdown": st.column_config.NumberColumn(format="%.2f%%"),
+                },
+                hide_index=True
+            )

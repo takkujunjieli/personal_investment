@@ -10,7 +10,7 @@ PEAD (盈后漂移) 是有效市场假说 (EMH) 最著名的 "反例" 之一。
 
 ## 2. 当前参数设定的逻辑 (Current Logic)
 
-在 `SatelliteEngine` 中，我是这样定义 "PEAD 信号" 的：
+在 `MarketTimingEngine` 中，我是这样定义 "PEAD 信号" 的：
 
 ### 第一步：日线初筛 (Coarse Filter)
 *   **Gap Up > 2%**: 

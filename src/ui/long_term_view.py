@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from src.engines.core_engine import CoreEngine
-
+from src.engines.stock_selection_engine import StockSelectionEngine
 
 
 def run_analysis(tickers):
     """
     Executes the Smart Beta analysis and renders results.
     """
-    engine = CoreEngine()
+    engine = StockSelectionEngine()
     with st.spinner("Loading data from Local Database (Instant)..."):
         df = engine.rank_stocks(tickers)
     
@@ -153,7 +152,7 @@ def run_magic_formula_analysis(tickers):
     """
     Executes the Magic Formula analysis and renders results.
     """
-    engine = CoreEngine()
+    engine = StockSelectionEngine()
     with st.spinner("Calculating Magic Formula Ranks (Local DB)..."):
         df = engine.rank_magic_formula(tickers)
         
@@ -199,7 +198,7 @@ def run_magic_formula_analysis(tickers):
     st.plotly_chart(fig, use_container_width=True)
 
 def run_garp_analysis(tickers):
-    engine = CoreEngine()
+    engine = StockSelectionEngine()
     with st.spinner("Loading Growth & PEG Data (Local DB)..."):
         df = engine.rank_garp(tickers)
         

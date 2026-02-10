@@ -4,16 +4,25 @@ from src.data.market_data import MarketDataFetcher
 from src.engines.ta_overlay import TechnicalAnalysis
 import yfinance as yf
 from datetime import datetime, timedelta
+from src.engines.strategy_registry import PeadStrategy, LiquidityCrisisStrategy
 
-class SatelliteEngine:
+class MarketTimingEngine:
     def __init__(self):
         self.market = MarketDataFetcher()
+        self.pead_strat = PeadStrategy()
+        self.rev_strat = LiquidityCrisisStrategy()
 
-    def scan_pead(self, tickers: list) -> pd.DataFrame:
+    def scan_pead(self, tickers: list, **params) -> pd.DataFrame:
         """
         Post-Earnings Announcement Drift Scanner.
         Uses Intraday data to spot true Gap Ups including Pre-Market action.
         """
+        # Merge defaults with provided params
+        config = self.pead_strat.default_params.copy()
+        config.update(params)
+        
+        gap_threshold = config.get('gap_pct', 0.02)
+        
         candidates = []
         for ticker in tickers:
             # We first check daily for a rough signal to avoid API spamming
@@ -28,7 +37,7 @@ class SatelliteEngine:
             # Rough Check: Did it move today?
             daily_change = (today['close'] - yesterday['close']) / yesterday['close']
             
-            if abs(daily_change) > 0.02: # If > 2% move, let's investigate the microstructure
+            if abs(daily_change) > gap_threshold: # If > Threshold move, let's investigate the microstructure
                 
                 # Fetch 5-minute data with pre-market
                 intra = self.market.fetch_intraday(ticker, period="2d", interval="15m")
@@ -57,10 +66,10 @@ class SatelliteEngine:
                 
                 gap_pct = (today_open - prev_close) / prev_close
                 
-                # Filter: Gap > 2% AND Price Holding (Current > Open * 0.98)
+                # Filter: Gap > Threshold AND Price Holding (Current > Open * 0.98)
                 current_price = intra['close'].iloc[-1]
                 
-                if gap_pct > 0.02 and current_price > (today_open * 0.98):
+                if gap_pct > gap_threshold and current_price > (today_open * 0.98):
                     # TA Check: Is it above SMA20? (Trend alignment)
                     daily_with_ta = TechnicalAnalysis.add_indicators(daily_df.copy())
                     trend_setup = TechnicalAnalysis.check_trend_setup(daily_with_ta)
@@ -91,11 +100,18 @@ class SatelliteEngine:
             pass
         return 0, 0
 
-    def scan_reversal(self, tickers: list) -> pd.DataFrame:
+    def scan_reversal(self, tickers: list, **params) -> pd.DataFrame:
         """
         VaR Breach Scanner based on Liquidity Crisis logic.
         Condition: VIX is high AND Stock drops > VaR 95%.
         """
+        # Merge defaults
+        config = self.rev_strat.default_params.copy()
+        config.update(params)
+        
+        lookback = config.get('lookback', 252)
+        percentile = config.get('percentile', 0.05)
+        
         candidates = []
         
         # 1. Check VIX Context
@@ -117,7 +133,7 @@ class SatelliteEngine:
             returns = df['close'].pct_change().dropna()
             
             # VaR 95% is the 5th percentile (e.g., -0.03)
-            var_95 = returns.quantile(0.05) 
+            var_95 = returns.quantile(percentile) 
             today_ret = returns.iloc[-1]
             
             # Logic: PRICE DROP > VaR Threshold (e.g. Drop -5% when VaR is -3%)
@@ -132,7 +148,8 @@ class SatelliteEngine:
                 if is_high_vol:
                     signal_type = "Liquidity Driver (VIX Spike)"
                     confidence = "High (Quality on Sale)"
-                
+                    
+                # Store extra info including VaR used
                 candidates.append({
                     'ticker': ticker,
                     'signal': signal_type,

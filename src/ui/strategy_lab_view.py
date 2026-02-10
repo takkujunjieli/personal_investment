@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from src.engines.core_engine import CoreEngine
+from src.engines.stock_selection_engine import StockSelectionEngine
 from src.engines.strategy_registry import (
     SmaCrossStrategy, RsiMeanReversionStrategy, 
     PeadStrategy, LiquidityCrisisStrategy
@@ -33,75 +33,105 @@ def render(tickers):
             st.write("")
             run_btn = st.button("Run Screener", type="primary")
             
+        # ---------------------------------------------------------
+        # State Management & Execution
+        # ---------------------------------------------------------
         if run_btn:
-            engine = CoreEngine()
+            engine = StockSelectionEngine()
             with st.spinner(f"Ranking stocks using {selection_method}..."):
+                df = pd.DataFrame()
+                current_cols = []
+                
                 if "High Quality" in selection_method:
                     df = engine.rank_stocks(tickers)
-                    display_cols = ['ticker', 'composite_score', 'momentum_12m', 'roe', 'z_score', 'close']
+                    current_cols = ['ticker', 'composite_score', 'momentum_12m', 'roe', 'z_score', 'close']
                 elif "Undervalued" in selection_method:
                     df = engine.rank_magic_formula(tickers)
-                    display_cols = ['ticker', 'magic_score', 'roc', 'earnings_yield', 'close']
+                    current_cols = ['ticker', 'magic_score', 'roc', 'earnings_yield', 'close']
                 elif "Growth" in selection_method:
                     df = engine.rank_garp(tickers)
-                    display_cols = ['ticker', 'garp_score', 'peg', 'growth', 'roe', 'close']
+                    current_cols = ['ticker', 'garp_score', 'peg', 'growth', 'roe', 'close']
             
             if not df.empty:
-                # Add "Add to Backtest Lab" logic here too?
-                # For now, just show the table. Usage flow: Synced -> View Here -> Add to Lab?
-                # User asked to "Add to Lab" check in previous task. 
-                # Ideally we replicate the "Add to Lab" editor here.
-                
-                # Setup Session State for Lab
-                if 'backtest_tickers' not in st.session_state:
-                    st.session_state['backtest_tickers'] = []
-                
-                df['Add to Lab'] = df['ticker'].isin(st.session_state['backtest_tickers'])
-                
-                final_cols = ['Add to Lab'] + display_cols
-                
-                # Checkbox Editor
-                edited_df = st.data_editor(
-                    df[final_cols].head(20).style.format(precision=2),
-                    column_config={
-                        "Add to Lab": st.column_config.CheckboxColumn("Add to Lab", default=False),
-                        "ticker": st.column_config.TextColumn("Ticker", disabled=True),
-                    },
-                    disabled=display_cols,
-                    hide_index=True,
-                    use_container_width=True,
-                    key="screener_editor"
-                )
-                
-                # Sync Logic
-                if edited_df is not None:
-                    selected = edited_df[edited_df['Add to Lab'] == True]['ticker'].tolist()
-                    current = st.session_state['backtest_tickers']
-                    # Add new selected
-                    for t in selected:
-                        if t not in current:
-                            current.append(t)
-                    # Remove unselected (only from those visible in list to avoid clearing hidden ones)
-                    visible = edited_df['ticker'].tolist()
-                    for t in visible:
-                        if t not in selected and t in current:
-                            current.remove(t)
-                    
-                    st.session_state['backtest_tickers'] = current
-                    st.success(f"Backtest Lab List Updated: {len(current)} tickers")
-
+                # Save to Session State
+                st.session_state['screener_result'] = df
+                st.session_state['screener_cols'] = current_cols
+                # Force a rerun to show results immediately from state (optional, but cleaner flow) or just fall through
             else:
                 st.warning("No data returned. Try Syncing Data first.")
+                # Clear previous results if run fails? Or keep them? 
+                # Let's keep them but show warning ensures user knows this run failed.
+        
+        # ---------------------------------------------------------
+        # Display Logic (from Session State)
+        # ---------------------------------------------------------
+        if 'screener_result' in st.session_state:
+            df = st.session_state['screener_result']
+            display_cols = st.session_state['screener_cols']
+            
+            st.divider()
+            
+            # Setup Session State for Lab
+            if 'backtest_tickers' not in st.session_state:
+                st.session_state['backtest_tickers'] = []
+            
+            # Re-evaluate "Add to Lab" every render to match current backtest_tickers state
+            # (In case user removed them in another tab)
+            df['Add to Lab'] = df['ticker'].isin(st.session_state['backtest_tickers'])
+            
+            final_cols = ['Add to Lab'] + display_cols
+            
+            # Checkbox Editor
+            edited_df = st.data_editor(
+                df[final_cols].head(50).style.format(precision=2), # Increased to 50
+                column_config={
+                    "Add to Lab": st.column_config.CheckboxColumn("Add to Lab", default=False),
+                    "ticker": st.column_config.TextColumn("Ticker", disabled=True),
+                },
+                disabled=display_cols,
+                hide_index=True,
+                use_container_width=True,
+                key="screener_editor"
+            )
+            
+            # Sync Logic
+            if edited_df is not None:
+                selected = edited_df[edited_df['Add to Lab'] == True]['ticker'].tolist()
+                current = st.session_state['backtest_tickers']
+                
+                # We need to be careful not to delete tickers that are NOT in the screener list
+                # but ARE in the backtest list (added from elsewhere).
+                
+                # 1. Identify tickers visible in this screener result
+                visible_tickers = df['ticker'].tolist()
+                
+                # 2. Add newly selected
+                for t in selected:
+                    if t not in current:
+                        current.append(t)
+                
+                # 3. Remove deselected (ONLY if they are in the visible set)
+                for t in visible_tickers:
+                    if t not in selected and t in current:
+                        current.remove(t)
+                
+                st.session_state['backtest_tickers'] = current
+                
+                # Show summary
+                st.caption(f"Active Backtest Universe: {len(current)} tickers")
+
 
     # ---------------------------------------------------------
     # TAB 2: MARKET TIMING (择时)
     # ---------------------------------------------------------
+    # ---------------------------------------------------------
+    # TAB 2: MARKET TIMING (择时)
+    # ---------------------------------------------------------
     with tab_time:
-        st.subheader("Strategy Configuration")
-        st.info("Configure parameters here. These settings will be applied in the Backtest Lab.")
+        st.subheader("Strategy Configuration & Scanner")
+        st.info("Configure parameters here. Scans run on live data, Backtests run on historical data.")
         
         # Initialize Strategy Registry
-        # We define them here to get access to default_params
         strategies = [
             SmaCrossStrategy(),
             RsiMeanReversionStrategy(),
@@ -116,43 +146,87 @@ def render(tickers):
         stored_params = st.session_state['strategy_params']
         
         # Render Config Widgets
-        cols = st.columns(2)
+        cols_cfg = st.columns(2)
         for i, strat in enumerate(strategies):
-            with cols[i % 2]:
-                with st.expander(f"⚙️ {strat.name}", expanded=True):
-                    # Get defaults
+            with cols_cfg[i % 2]:
+                with st.expander(f"⚙️ {strat.name}", expanded=False):
                     defaults = strat.default_params
-                    # Get Value from session or default
                     current_vals = stored_params.get(strat.name, defaults.copy())
-                    
-                    # Store updated values temporarily
                     new_vals = {}
                     
                     for key, val in defaults.items():
-                        # Create a unique key for streamlit widget
                         widget_key = f"conf_{strat.name}_{key}"
-                        
                         if isinstance(val, int):
-                            new_vals[key] = st.number_input(
-                                key, 
-                                value=current_vals.get(key, val), 
-                                step=1,
-                                key=widget_key
-                            )
+                            new_vals[key] = st.number_input(key, value=current_vals.get(key, val), step=1, key=widget_key)
                         elif isinstance(val, float):
-                            new_vals[key] = st.number_input(
-                                key, 
-                                value=current_vals.get(key, val), 
-                                step=0.01, 
-                                format="%.2f",
-                                key=widget_key
-                            )
+                            new_vals[key] = st.number_input(key, value=current_vals.get(key, val), step=0.01, format="%.2f", key=widget_key)
                         else:
                             new_vals[key] = val
                     
-                    # Update Session State immediately on change
                     stored_params[strat.name] = new_vals
                     
-        # Save back to global state (redundant but safe)
         st.session_state['strategy_params'] = stored_params
+        
+        st.divider()
+        
+        # Scanner Section
+        st.subheader("📡 Live Scanner")
+        
+        col_scan1, col_scan2 = st.columns(2)
+        
+        # Scanner 1: PEAD
+        with col_scan1:
+            st.markdown("#### Event Driven (PEAD)")
+            st.caption("Scans for stocks with Gap Ups > Threshold")
+            
+            if st.button("Scan for PEAD Candidates"):
+                # Get params
+                pead_params = stored_params.get("Event Driven (PEAD)", {})
+                
+                from src.engines.market_timing_engine import MarketTimingEngine
+                timing_engine = MarketTimingEngine()
+                
+                with st.spinner("Scanning Intraday Data..."):
+                    df_pead = timing_engine.scan_pead(tickers, **pead_params)
+                
+                if not df_pead.empty:
+                    st.success(f"Found {len(df_pead)} candidates!")
+                    st.dataframe(df_pead.style.format({
+                        'gap_pct': '{:.2%}',
+                        'current_return': '{:.2%}', 
+                        'price': '${:.2f}'
+                    }))
+                else:
+                    st.info("No PEAD candidates found today.")
+
+        # Scanner 2: Liquidity Crisis
+        with col_scan2:
+            st.markdown("#### Mean Reversion (VaR)")
+            st.caption("Scans for VaR Breaches + High VIX")
+            
+            if st.button("Scan for Crisis Alpha"):
+                # Get params
+                var_params = stored_params.get("Mean Reversion (VaR)", {})
+                
+                from src.engines.market_timing_engine import MarketTimingEngine
+                timing_engine = MarketTimingEngine()
+                
+                with st.spinner("Checking VIX and Market Stress..."):
+                    df_rev = timing_engine.scan_reversal(tickers, **var_params)
+                
+                # Show VIX context
+                vix, _ = timing_engine.get_market_sentiment()
+                if vix > 20:
+                    st.error(f"⚠️ High Volatility Alert: VIX = {vix:.2f}")
+                else:
+                    st.success(f"Market Calm: VIX = {vix:.2f}")
+
+                if not df_rev.empty:
+                    st.dataframe(df_rev.style.format({
+                        'drop': '{:.2%}',
+                        'var_95': '{:.2%}',
+                        'price': '${:.2f}'
+                    }))
+                else:
+                    st.info("No VaR breaches found.")
 

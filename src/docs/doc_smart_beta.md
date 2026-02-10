@@ -15,7 +15,7 @@ Smart Beta (聪明贝塔) 是一种介于 "主动投资" 和 "被动指数投资
 
 ## 2. 当前参数设定的逻辑 (Current Logic)
 
-我们目前的 `CoreEngine` 采用了非常经典且简单的参数：
+我们目前的 `StockSelectionEngine` 采用了非常经典且简单的参数：
 
 | 因子 (Factor) | 具体指标 (Metric) | 权重 (Weight) | 逻辑解释 |
 | :--- | :--- | :--- | :--- |

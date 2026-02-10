@@ -6,7 +6,7 @@ from src.data.store import DataStore
 from src.engines.ta_overlay import TechnicalAnalysis
 from sklearn.preprocessing import StandardScaler
 
-class CoreEngine:
+class StockSelectionEngine:
     def __init__(self):
         self.market = MarketDataFetcher()
         self.fund = FundamentalDataFetcher()

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from src.utils import DEFAULT_TICKERS
-from src.ui import long_term_view, short_term_view
+from src.ui import long_term_view
 from src.data.watchlist_manager import WatchlistManager
 from src.data.universe_manager import UniverseManager
 from pathlib import Path

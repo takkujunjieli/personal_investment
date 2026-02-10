@@ -55,8 +55,8 @@
 **量化管 "选股" (Selection)，技术管 "择时" (Timing)。**
 
 1.  **Selection (用我们的策略)**:
-    *   用 `CoreEngine` 选出 Top 10 的好股票。
-    *   用 `SatelliteEngine` 选出 发生了 PEAD 或 VIX Breach 的候选股。
+    *   用 `StockSelectionEngine` 选出 Top 10 的好股票。
+    *   用 `MarketTimingEngine` 选出 发生了 PEAD 或 VIX Breach 的候选股。
     *   *结果*: 你拥有了一个胜算极高的 **Pool**。
 
 2.  **Timing (用 TA 指标)**:
