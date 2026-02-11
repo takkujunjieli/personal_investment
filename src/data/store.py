@@ -150,6 +150,33 @@ class DataStore:
         conn.close()
         return result[0] if result else None
 
+    def get_latest_dates(self, tickers: list) -> dict:
+        """
+        Returns {ticker: latest_date_str} for a list of tickers.
+        """
+        if not tickers:
+            return {}
+            
+        conn = self._get_conn()
+        placeholders = ','.join(['?'] * len(tickers))
+        query = f'''
+            SELECT ticker, MAX(date) 
+            FROM market_data 
+            WHERE ticker IN ({placeholders}) 
+            GROUP BY ticker
+        '''
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, tickers)
+            results = cursor.fetchall() # [(ticker, date), ...]
+            return {row[0]: row[1] for row in results}
+        except Exception as e:
+            print(f"Error batch fetching dates: {e}")
+            return {}
+        finally:
+            conn.close()
+
     def get_latest_stock_info(self, tickers: list) -> dict:
         """
         Returns a dict of {ticker: {info_dict}} for a list of tickers.
@@ -230,8 +257,6 @@ class DataStore:
     def save_ranking_history(self, strategy: str, df: pd.DataFrame):
         """
         Saves the ranking results to the history table.
-        df must have 'ticker' and a score column (composite_score or magic_score).
-        We will also save the calculated rank (row number).
         """
         if df.empty:
             return
@@ -255,18 +280,13 @@ class DataStore:
         
         records = []
         for rank, row in df.iterrows():
-            # Rank is 0-indexed in iterrows if reset_index was called, so rank+1
-            # But let's be safe and assume the caller sorts it. 
-            # actually the caller usually does reset_index(drop=True), so index is 0,1,2...
-            # The official rank is index + 1
-            
             score = row.get('composite_score') if 'composite_score' in row else row.get('magic_score', 0)
             
             records.append((
                 strategy,
                 today,
                 row['ticker'],
-                rank + 1, # 1-based rank
+                rank + 1,
                 score
             ))
             
@@ -280,6 +300,36 @@ class DataStore:
             print(f"Error saving ranking history: {e}")
         finally:
             conn.close()
+
+    def save_sync_status(self, tickers: list, status: str):
+        """
+        Logs sync status (e.g. TIMEOUT) for tickers.
+        """
+        if not tickers:
+            return
+            
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS sync_log (
+                ticker TEXT PRIMARY KEY,
+                status TEXT,
+                last_attempt TEXT
+            )
+        ''')
+        
+        now = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
+        records = [(t, status, now) for t in tickers]
+        
+        cursor.executemany('''
+            INSERT OR REPLACE INTO sync_log (ticker, status, last_attempt)
+            VALUES (?, ?, ?)
+        ''', records)
+        
+        conn.commit()
+        conn.close()
 
     def get_previous_rankings(self, strategy: str) -> dict:
         """
