@@ -16,7 +16,14 @@ class TechnicalAnalysis:
         df['sma_50'] = df['close'].rolling(window=50).mean()
         df['sma_200'] = df['close'].rolling(window=200).mean()
         
-        # 2. MACD (Momentum)
+        # 2. Volume Analysis
+        if 'volume' in df.columns:
+            df['vol_sma_20'] = df['volume'].rolling(window=20).mean()
+            # Relative Volume (RVOL) = Current Volume / Average Volume
+            # Avoid division by zero
+            df['rvol'] = df['volume'] / df['vol_sma_20'].replace(0, 1)
+
+        # 3. MACD (Momentum)
         # EMA 12, EMA 26
         ema12 = df['close'].ewm(span=12, adjust=False).mean()
         ema26 = df['close'].ewm(span=26, adjust=False).mean()

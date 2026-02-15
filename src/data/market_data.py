@@ -1,6 +1,6 @@
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from src.data.store import DataStore
 
 class MarketDataFetcher:
@@ -12,52 +12,63 @@ class MarketDataFetcher:
         Fetches data from DB first, then updates from API if needed.
         force_download: If True, skips cache check and downloads fresh data.
         """
+        today_date = datetime.now().date()
+        today_str = today_date.strftime('%Y-%m-%d')
+
+        # Logic: We only sync COMPLETED days (up to yesterday).
+        # If last_date >= yesterday, we are up to date.
+        
+        should_fetch = False
         if force_download:
              print(f"Forcing download for {ticker}...")
-             last_date = None # Bypass cache check logic
+             start_date = None 
+             should_fetch = True
         else:
              # Check latest date in DB
              last_date = self.store.get_latest_date(ticker)
-        
-        today = datetime.now().strftime('%Y-%m-%d')
+             
+             if not last_date:
+                 should_fetch = True
+                 start_date = None
+             else:
+                 last_dt = datetime.strptime(last_date, '%Y-%m-%d').date()
+                 # If last data point is yesterday or later (today), we are good.
+                 if last_dt >= (today_date - timedelta(days=1)):
+                     # Already up to date (we have yesterday's close)
+                     return self.store.get_market_data(ticker)
+                 
+                 start_date = (last_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+                 should_fetch = True
 
-        if last_date == today:
-            # Check if we should force refresh (Trading Session Logic)
-            # If it's a weekday, we assume market might be open or data changed intraday.
-            # Simple check: If date == today, fetch the single day again to update Close price.
-            is_weekend = datetime.now().weekday() >= 5
-            if is_weekend:
-                 # Market closed, cache is valid
-                 print(f"Loading {ticker} from cache (Weekend)...")
-                 return self.store.get_market_data(ticker)
-            
-            # If weekday, we force a refresh for today's data candle
-            print(f"Intraday/Trading Session: Refreshing {ticker} for today...")
-            start_date = today
-        
-        # Need to fetch new data
-        start_date = None
-        if last_date:
-            start_dt = datetime.strptime(last_date, '%Y-%m-%d') + timedelta(days=1)
-            if start_dt > datetime.now():
-                # Already up to date (weekend case)
-                return self.store.get_market_data(ticker)
-            start_date = start_dt.strftime('%Y-%m-%d')
-            print(f"Updating {ticker} from {start_date}...")
-            
-            # Fetch only missing range
-            df = yf.download(ticker, start=start_date, progress=False)
-        else:
-            print(f"Downloading full history for {ticker}...")
-            df = yf.download(ticker, period=period, progress=False)
+        if should_fetch:
+            if start_date:
+                print(f"Updating {ticker} from {start_date} to {today_str} (excluding today)...")
+                try:
+                    # Attempt incremental update with timeout and NO threads
+                    # end=today_str means up to yesterday (exclusive of today)
+                    df = yf.download(ticker, start=start_date, end=today_str, progress=False, timeout=10, threads=False)
+                except Exception as e:
+                    print(f"Incremental update failed/timed out for {ticker}: {e}. Retrying full history...")
+                    df = pd.DataFrame() 
 
-        if not df.empty:
-            # yfinance returns MultiIndex columns sometimes, flat it
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            
-            # Save to DB
-            self.store.save_market_data(ticker, df)
+                if df.empty:
+                     # Fallback to full download BUT still up to yesterday? 
+                     # Or full download naturally includes today? 
+                     # Let's effectively cap it at yesterday to be safe.
+                     print(f"Incremental update returned empty/failed for {ticker}. Redownloading full history...")
+                     df = yf.download(ticker, period=period, end=today_str, progress=False, timeout=20, threads=False)
+
+            else:
+                print(f"Downloading full history for {ticker} up to {today_str}...")
+                df = yf.download(ticker, period=period, end=today_str, progress=False, timeout=20, threads=False)
+
+            if not df.empty:
+                # yfinance returns MultiIndex columns sometimes, flat it
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel(1)
+                
+                # Save to DB
+                self.store.save_market_data(ticker, df)
         
         # Return full dataset from DB to ensure consistency
         return self.store.get_market_data(ticker)
@@ -77,7 +88,7 @@ class MarketDataFetcher:
         print(f"Fetching intraday data for {ticker} ({period}, {interval})...")
         try:
             # prepost=True gives us the pre-market and after-hours action
-            df = yf.download(ticker, period=period, interval=interval, prepost=True, progress=False)
+            df = yf.download(ticker, period=period, interval=interval, prepost=True, progress=False, timeout=10, threads=False)
             
             if not df.empty:
                 if isinstance(df.columns, pd.MultiIndex):

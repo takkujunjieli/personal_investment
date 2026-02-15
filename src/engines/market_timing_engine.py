@@ -15,75 +15,61 @@ class MarketTimingEngine:
 
     def scan_pead(self, tickers: list, **params) -> pd.DataFrame:
         """
-        Post-Earnings Announcement Drift Scanner.
-        Uses Intraday data to spot true Gap Ups including Pre-Market action.
+        Post-Earnings Announcement Drift Scanner (Daily Only).
+        Uses Daily data to spot Gap Ups (Open vs Prev Close).
         """
         # Merge defaults with provided params
         config = self.pead_strat.default_params.copy()
         config.update(params)
         
         gap_threshold = config.get('gap_pct', 0.02)
+        min_rvol = config.get('min_rvol', 1.5) # New Param
         
         candidates = []
         for ticker in tickers:
-            # We first check daily for a rough signal to avoid API spamming
-            # If daily shows a big move, we dive into intraday
-            daily_df = self.market.fetch_data(ticker, period="5d")
-            if daily_df.empty or len(daily_df) < 2:
+            # We need enough history for 20-day Volume SMA
+            daily_df = self.market.fetch_data(ticker, period="2mo")
+            if daily_df.empty or len(daily_df) < 22: # 20 for SMA + 2 for gap
                 continue
+            
+            # Helper for indicators
+            daily_df = TechnicalAnalysis.add_indicators(daily_df)
             
             today = daily_df.iloc[-1]
             yesterday = daily_df.iloc[-2]
             
-            # Rough Check: Did it move today?
-            daily_change = (today['close'] - yesterday['close']) / yesterday['close']
+            # 1. Calc Gap: Today Open vs Yesterday Close
+            prev_close = yesterday['close']
+            today_open = today['open']
             
-            if abs(daily_change) > gap_threshold: # If > Threshold move, let's investigate the microstructure
+            if prev_close == 0: continue
+            
+            gap_pct = (today_open - prev_close) / prev_close
+            
+            # 2. Filter: Gap > Threshold
+            if gap_pct > gap_threshold:
+                # 3. Volume Check: RVOL > Threshold
+                # We want high relative volume to confirm institutional interest
+                rvol = today.get('rvol', 1.0) # Default to 1 if missing for some reason
                 
-                # Fetch 5-minute data with pre-market
-                intra = self.market.fetch_intraday(ticker, period="2d", interval="15m")
-                if intra.empty:
-                    continue
+                if rvol > min_rvol:
+                    # 4. Strength Check: Price is holding?
+                    # Condition: Current Price (Close) > Open * 0.99
+                    current_price = today['close']
                     
-                # Logic: Compare Yesterday's Regular Close vs Today's Pre-Market High/Open
-                # Or simply: Look at the first bar of today vs last bar of yesterday
-                
-                # Split by day
-                dates = intra.index.to_series().dt.date.unique()
-                if len(dates) < 2:
-                    continue
-                    
-                today_date = dates[-1]
-                yesterday_date = dates[-2]
-                
-                today_bars = intra[intra.index.date == today_date]
-                yesterday_bars = intra[intra.index.date == yesterday_date]
-                
-                if today_bars.empty or yesterday_bars.empty:
-                    continue
-                    
-                prev_close = yesterday_bars['close'].iloc[-1]
-                today_open = today_bars['open'].iloc[0] # This includes pre-market if present
-                
-                gap_pct = (today_open - prev_close) / prev_close
-                
-                # Filter: Gap > Threshold AND Price Holding (Current > Open * 0.98)
-                current_price = intra['close'].iloc[-1]
-                
-                if gap_pct > gap_threshold and current_price > (today_open * 0.98):
-                    # TA Check: Is it above SMA20? (Trend alignment)
-                    daily_with_ta = TechnicalAnalysis.add_indicators(daily_df.copy())
-                    trend_setup = TechnicalAnalysis.check_trend_setup(daily_with_ta)
-                    
-                    candidates.append({
-                        'ticker': ticker,
-                        'signal': 'PEAD (Intraday Confirmed)',
-                        'gap_pct': gap_pct,
-                        'current_return': (current_price - prev_close)/prev_close,
-                        'price': current_price,
-                        'time': intra.index[-1].strftime('%H:%M'),
-                        'ta_trend': trend_setup['trend']
-                    })
+                    if current_price > (today_open * 0.99):
+                        trend_setup = TechnicalAnalysis.check_trend_setup(daily_df)
+                        
+                        candidates.append({
+                            'ticker': ticker,
+                            'signal': 'PEAD (Gap + Vol)',
+                            'gap_pct': gap_pct,
+                            'rvol': round(rvol, 2),
+                            'current_return': (current_price - prev_close)/prev_close,
+                            'price': current_price,
+                            'time': 'Daily',
+                            'ta_trend': trend_setup['trend']
+                        })
                 
         return pd.DataFrame(candidates)
 
@@ -104,7 +90,7 @@ class MarketTimingEngine:
     def scan_reversal(self, tickers: list, **params) -> pd.DataFrame:
         """
         VaR Breach Scanner based on Liquidity Crisis logic.
-        Condition: VIX is high AND Stock drops > VaR 95%.
+        Condition: VIX is high AND Stock drops > VaR 95% AND High Volume (Capitulation).
         """
         # Merge defaults
         config = self.rev_strat.default_params.copy()
@@ -112,54 +98,53 @@ class MarketTimingEngine:
         
         lookback = config.get('lookback', 252)
         percentile = config.get('percentile', 0.05)
+        min_rvol = config.get('min_rvol', 2.0) # Panic selling volume threshold
         
         candidates = []
         
         # 1. Check VIX Context
         current_vix, vix_ma = self.get_market_sentiment()
-        # Threshold: VIX > 20 is a common proxy for "Fear", or looking for a spike
         is_high_vol = current_vix > 20 or current_vix > (vix_ma * 1.1)
-        
-        # Note: If VIX is low, we warn the user that these might be idiosyncratic risks, not forced selling.
         
         for ticker in tickers:
             df = self.market.fetch_data(ticker, period="1y")
             if df.empty or len(df) < 50:
                 continue
             
-            current_price = df['close'].iloc[-1]
+            # Add Volume Indicators
+            df = TechnicalAnalysis.add_indicators(df)
+            
+            today = df.iloc[-1]
+            current_price = today['close']
+            rvol = today.get('rvol', 0)
             
             # VaR (95%) - Historical Simulation
-            # Look at 1-year distribution of returns
             returns = df['close'].pct_change().dropna()
-            
-            # VaR 95% is the 5th percentile (e.g., -0.03)
             var_95 = returns.quantile(percentile) 
             today_ret = returns.iloc[-1]
             
-            # Logic: PRICE DROP > VaR Threshold (e.g. Drop -5% when VaR is -3%)
-            # This indicates a "Tail Event"
-            
+            # Logic: PRICE DROP > VaR Threshold (Tail Event) AND High Volume
             if today_ret < var_95:
-                # We found a VaR Breach.
-                # Now classify it:
-                signal_type = "Idiosyncratic Crash (Risk!)"
-                confidence = "Low"
-                
-                if is_high_vol:
-                    signal_type = "Liquidity Driver (VIX Spike)"
-                    confidence = "High (Quality on Sale)"
+                # Secondary Check: Is it a high volume washout?
+                # If volume is low, it might just be a bleed, not a capitulation bottom.
+                if rvol > min_rvol:
+                    signal_type = "Idiosyncratic Crash (Risk!)"
+                    confidence = "Low"
                     
-                # Store extra info including VaR used
-                candidates.append({
-                    'ticker': ticker,
-                    'signal': signal_type,
-                    'confidence': confidence,
-                    'drop': today_ret,
-                    'var_95': var_95,
-                    'price': current_price,
-                    'vix_context': round(current_vix, 2)
-                })
+                    if is_high_vol:
+                        signal_type = "Liquidity Driver (VIX Spike)"
+                        confidence = "High (Quality on Sale)"
+                        
+                    candidates.append({
+                        'ticker': ticker,
+                        'signal': signal_type,
+                        'confidence': confidence,
+                        'drop': today_ret,
+                        'var_95': var_95,
+                        'price': current_price,
+                        'rvol': round(rvol, 2),
+                        'vix_context': round(current_vix, 2)
+                    })
                 
         return pd.DataFrame(candidates)
 
